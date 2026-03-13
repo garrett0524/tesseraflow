@@ -507,6 +507,157 @@ select { cursor: pointer; }
 }
 
 @media (max-width: 768px) {
-  .grid-4 { grid-template-columns: 1fr; }
-  .main-content { padding: var(--space-lg); }
+  /* --- Layout --- */
+  .app-layout {
+    flex-direction: column;
+  }
+
+  .main-content {
+    padding: var(--space-md);
+    padding-top: var(--space-md);
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* --- Stats Grid: 2x2 on mobile --- */
+  .grid-4 {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-sm);
+  }
+
+  /* --- Typography: slightly smaller headings --- */
+  h1 {
+    font-size: 22px;
+  }
+
+  h2 {
+    font-size: 16px;
+  }
+
+  h3 {
+    font-size: 14px;
+  }
+
+  /* --- Stat Cards: compact on mobile --- */
+  .stat-card {
+    padding: var(--space-md);
+  }
+
+  .stat-card .stat-value {
+    font-size: 24px;
+  }
+
+  .stat-card .stat-label {
+    font-size: 10px;
+  }
+
+  /* --- Buttons: ensure tap targets --- */
+  .btn {
+    min-height: 44px;
+    padding: 10px 16px;
+  }
+
+  .btn-sm {
+    min-height: 36px;
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  /* --- Tab Buttons: scrollable row --- */
+  .tab-button {
+    min-height: 44px;
+    padding: var(--space-sm) var(--space-md);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* --- Modals: full-screen on mobile --- */
+  .modal-overlay {
+    align-items: stretch;
+    padding: 0;
+  }
+
+  .modal-content {
+    max-width: 100% !important;
+    width: 100% !important;
+    max-height: 100vh;
+    height: 100vh;
+    border-radius: 0;
+    animation: none;
+    padding: var(--space-lg);
+  }
+
+  /* --- Page Header --- */
+  .page-header {
+    margin-bottom: var(--space-lg);
+  }
+
+  /* --- Cards: reduce padding --- */
+  .card {
+    padding: var(--space-md);
+  }
+
+  /* --- Data Table: horizontal scroll wrapper --- */
+  .data-table {
+    font-size: 13px;
+  }
+
+  .data-table th {
+    padding: var(--space-sm) var(--space-md);
+    font-size: 10px;
+  }
+
+  .data-table td {
+    padding: var(--space-sm) var(--space-md);
+    font-size: 13px;
+  }
+
+  /* --- Toast Notifications: full width --- */
+  .toast-container {
+    left: var(--space-md);
+    right: var(--space-md);
+    top: 60px;
+  }
+
+  .toast {
+    min-width: auto;
+    width: 100%;
+  }
+
+  /* --- Utility: prevent horizontal overflow --- */
+  .flex {
+    flex-wrap: wrap;
+  }
+
+  /* --- Smooth scrolling for iOS --- */
+  * {
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* ── Extra-small phones (max-width: 480px) ── */
+@media (max-width: 480px) {
+  .main-content {
+    padding: var(--space-sm);
+  }
+
+  .grid-4 {
+    grid-template-columns: 1fr;
+  }
+
+  h1 {
+    font-size: 20px;
+  }
+
+  .stat-card .stat-value {
+    font-size: 20px;
+  }
+
+  .modal-content {
+    padding: var(--space-md);
+  }
+
+  .card {
+    padding: var(--space-sm);
+    border-radius: var(--radius-md);
+  }
 }

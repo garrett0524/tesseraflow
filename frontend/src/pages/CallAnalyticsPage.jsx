@@ -115,7 +115,10 @@ export default function CallAnalyticsPage() {
         gap: 'var(--space-xs)',
         marginBottom: 'var(--space-xl)',
         borderBottom: '1px solid var(--border-default)',
-        overflowX: 'auto'
+        overflowX: 'auto',
+        WebkitOverflowScrolling: 'touch',
+        msOverflowStyle: 'none',
+        scrollbarWidth: 'none',
       }}>
         {sections.map(sec => (
           <button
@@ -140,7 +143,7 @@ export default function CallAnalyticsPage() {
             <StatCard label="Conversion Rate" value={`${stats?.conversion_rate || 0}%`} color="var(--color-success)" />
           </div>
 
-          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr 1fr', gap: 'var(--space-lg)', marginBottom: 'var(--space-xl)' }}>
+          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 'var(--space-lg)', marginBottom: 'var(--space-xl)' }}>
             <StatCard label="Calls Today" value={stats?.calls_today || 0} />
             <StatCard label="Calls This Week" value={stats?.calls_this_week || 0} />
             <StatCard label="Calls This Month" value={stats?.calls_this_month || 0} />
@@ -196,6 +199,7 @@ export default function CallAnalyticsPage() {
         <div className="card">
           <h3 style={{ marginBottom: 'var(--space-lg)' }}>Objection Tracker</h3>
           {trends?.objection_trends?.length > 0 ? (
+            <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
             <table className="data-table">
               <thead>
                 <tr>
@@ -233,6 +237,7 @@ export default function CallAnalyticsPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           ) : (
             <div style={{ textAlign: 'center', padding: 'var(--space-3xl)', color: 'var(--text-tertiary)' }}>
               No objection data yet. Record and analyze more calls to track objections.
@@ -501,9 +506,9 @@ export default function CallAnalyticsPage() {
           {/* Filters */}
           <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
             <div style={{ display: 'flex', gap: 'var(--space-md)', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-              <div>
+              <div style={{ minWidth: '120px' }}>
                 <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: '4px' }}>Outcome</label>
-                <select value={filterOutcome} onChange={e => setFilterOutcome(e.target.value)} style={{ width: '150px' }}>
+                <select value={filterOutcome} onChange={e => setFilterOutcome(e.target.value)} style={{ width: '100%', minHeight: '44px' }}>
                   <option value="">All</option>
                   <option value="interested">Interested</option>
                   <option value="not_interested">Not Interested</option>

@@ -6,6 +6,16 @@ import {
 } from '../../api'
 import { useAuth } from '../../contexts/AuthContext'
 
+const useIsMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  useEffect(() => {
+    const h = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', h);
+    return () => window.removeEventListener('resize', h);
+  }, []);
+  return isMobile;
+};
+
 const SCORING_RULES = [
   { factor: 'Category Match', points: '0-20', logic: 'Bars/Restaurants = 20, Gyms = 20, Other = 10' },
   { factor: 'Google Rating', points: '0-15', logic: '4.5+ = 15, 4.0-4.4 = 10, 3.5-3.9 = 5, below = 0' },
@@ -18,6 +28,7 @@ const SCORING_RULES = [
 
 export default function SettingsPanel() {
   const { logout } = useAuth();
+  const isMobile = useIsMobile();
   const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -155,99 +166,158 @@ export default function SettingsPanel() {
   }
 
   return (
-    <div style={{ maxWidth: '700px' }}>
+    <div style={{ maxWidth: isMobile ? '100%' : '700px' }}>
       {/* User Management */}
       <Section title="User Management">
         {usersLoading ? (
           <div style={{ color: 'var(--text-tertiary)', fontSize: '13px' }}>Loading users...</div>
         ) : (
           <>
-            <table className="data-table" style={{ marginBottom: 'var(--space-md)' }}>
-              <thead>
-                <tr>
-                  <th>User</th>
-                  <th>Username</th>
-                  <th>Role</th>
-                  <th>Last Login</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
+            {isMobile ? (
+              /* Mobile: Card view for users */
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)', marginBottom: 'var(--space-md)' }}>
                 {users.map(u => (
-                  <tr key={u.id} style={!u.is_active ? { opacity: 0.5 } : {}}>
-                    <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
-                        <div style={{
-                          width: '24px',
-                          height: '24px',
-                          borderRadius: '50%',
-                          background: u.avatar_color || '#6366f1',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: '10px',
-                          fontWeight: 700,
-                          color: '#fff',
-                          flexShrink: 0,
-                        }}>
-                          {u.name?.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
-                        </div>
-                        {u.name}
+                  <div key={u.id} style={{
+                    background: 'var(--bg-card-elevated)',
+                    border: '1px solid var(--border-default)',
+                    borderRadius: 'var(--radius-md)',
+                    padding: 'var(--space-md)',
+                    opacity: u.is_active ? 1 : 0.5,
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', marginBottom: 'var(--space-sm)' }}>
+                      <div style={{
+                        width: '28px', height: '28px', borderRadius: '50%',
+                        background: u.avatar_color || '#6366f1',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '10px', fontWeight: 700, color: '#fff', flexShrink: 0,
+                      }}>
+                        {u.name?.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
                       </div>
-                    </td>
-                    <td style={{ fontFamily: 'monospace', fontSize: '12px' }}>{u.username}</td>
-                    <td>
-                      {u.username === 'garrett' ? (
-                        <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>Admin</span>
-                      ) : (
-                        <select
-                          value={u.role}
-                          onChange={(e) => handleUpdateRole(u.id, e.target.value)}
-                          style={{ fontSize: '12px', padding: '2px 4px' }}
-                        >
-                          <option value="admin">Admin</option>
-                          <option value="member">Member</option>
-                        </select>
-                      )}
-                    </td>
-                    <td style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>
-                      {u.last_login ? new Date(u.last_login).toLocaleDateString() : 'Never'}
-                    </td>
-                    <td>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: '14px' }}>{u.name}</div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', fontFamily: 'monospace' }}>{u.username}</div>
+                      </div>
                       <span style={{
-                        padding: '2px 8px',
-                        borderRadius: 'var(--radius-full)',
-                        fontSize: '11px',
-                        fontWeight: 600,
+                        padding: '2px 8px', borderRadius: 'var(--radius-full)', fontSize: '11px', fontWeight: 600,
                         background: u.is_active ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
                         color: u.is_active ? '#10b981' : '#ef4444',
                       }}>
                         {u.is_active ? 'Active' : 'Inactive'}
                       </span>
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', gap: '4px' }}>
-                        <button
-                          className="btn btn-secondary"
-                          style={{ fontSize: '11px', padding: '2px 8px' }}
-                          onClick={() => handleResetPassword(u.id)}
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: 'var(--space-sm)' }}>
+                      <span>Role: {u.role}</span>
+                      <span>Last login: {u.last_login ? new Date(u.last_login).toLocaleDateString() : 'Never'}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+                      <button className="btn btn-secondary" style={{ fontSize: '11px', padding: '6px 12px', minHeight: '36px' }} onClick={() => handleResetPassword(u.id)}>
+                        Reset PW
+                      </button>
+                      <button className="btn btn-secondary" style={{ fontSize: '11px', padding: '6px 12px', minHeight: '36px' }} onClick={() => handleToggleActive(u)}>
+                        {u.is_active ? 'Deactivate' : 'Activate'}
+                      </button>
+                      {u.username !== 'garrett' && (
+                        <select
+                          value={u.role}
+                          onChange={(e) => handleUpdateRole(u.id, e.target.value)}
+                          style={{ fontSize: '12px', padding: '6px 8px', minHeight: '36px' }}
                         >
-                          Reset PW
-                        </button>
-                        <button
-                          className="btn btn-secondary"
-                          style={{ fontSize: '11px', padding: '2px 8px' }}
-                          onClick={() => handleToggleActive(u)}
-                        >
-                          {u.is_active ? 'Deactivate' : 'Activate'}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
+                          <option value="admin">Admin</option>
+                          <option value="member">Member</option>
+                        </select>
+                      )}
+                    </div>
+                  </div>
                 ))}
-              </tbody>
-            </table>
+              </div>
+            ) : (
+              <table className="data-table" style={{ marginBottom: 'var(--space-md)' }}>
+                <thead>
+                  <tr>
+                    <th>User</th>
+                    <th>Username</th>
+                    <th>Role</th>
+                    <th>Last Login</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map(u => (
+                    <tr key={u.id} style={!u.is_active ? { opacity: 0.5 } : {}}>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+                          <div style={{
+                            width: '24px',
+                            height: '24px',
+                            borderRadius: '50%',
+                            background: u.avatar_color || '#6366f1',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '10px',
+                            fontWeight: 700,
+                            color: '#fff',
+                            flexShrink: 0,
+                          }}>
+                            {u.name?.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
+                          </div>
+                          {u.name}
+                        </div>
+                      </td>
+                      <td style={{ fontFamily: 'monospace', fontSize: '12px' }}>{u.username}</td>
+                      <td>
+                        {u.username === 'garrett' ? (
+                          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>Admin</span>
+                        ) : (
+                          <select
+                            value={u.role}
+                            onChange={(e) => handleUpdateRole(u.id, e.target.value)}
+                            style={{ fontSize: '12px', padding: '2px 4px' }}
+                          >
+                            <option value="admin">Admin</option>
+                            <option value="member">Member</option>
+                          </select>
+                        )}
+                      </td>
+                      <td style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>
+                        {u.last_login ? new Date(u.last_login).toLocaleDateString() : 'Never'}
+                      </td>
+                      <td>
+                        <span style={{
+                          padding: '2px 8px',
+                          borderRadius: 'var(--radius-full)',
+                          fontSize: '11px',
+                          fontWeight: 600,
+                          background: u.is_active ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
+                          color: u.is_active ? '#10b981' : '#ef4444',
+                        }}>
+                          {u.is_active ? 'Active' : 'Inactive'}
+                        </span>
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          <button
+                            className="btn btn-secondary"
+                            style={{ fontSize: '11px', padding: '2px 8px' }}
+                            onClick={() => handleResetPassword(u.id)}
+                          >
+                            Reset PW
+                          </button>
+                          <button
+                            className="btn btn-secondary"
+                            style={{ fontSize: '11px', padding: '2px 8px' }}
+                            onClick={() => handleToggleActive(u)}
+                          >
+                            {u.is_active ? 'Deactivate' : 'Activate'}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
 
             {tempPassword && (
               <div style={{
@@ -295,7 +365,7 @@ export default function SettingsPanel() {
               }}>
                 <h4 style={{ marginBottom: 'var(--space-md)' }}>New User</h4>
                 <form onSubmit={handleAddUser}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
                     <div>
                       <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 'var(--space-xs)', textTransform: 'uppercase' }}>
                         Name
@@ -449,6 +519,7 @@ export default function SettingsPanel() {
 
       {/* Lead Scoring Rules */}
       <Section title="Lead Scoring Rules">
+        <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
         <table className="data-table" style={{ marginBottom: 'var(--space-md)' }}>
           <thead>
             <tr>
@@ -467,6 +538,7 @@ export default function SettingsPanel() {
             ))}
           </tbody>
         </table>
+        </div>
         <p style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>
           Current max: 80 points (Engagement disabled). Scores auto-calculate when leads are created or updated.
         </p>

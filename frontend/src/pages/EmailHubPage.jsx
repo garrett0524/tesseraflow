@@ -1,9 +1,20 @@
 import { useState, useEffect, useCallback } from 'react'
+
+const useIsMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  useEffect(() => {
+    const h = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', h);
+    return () => window.removeEventListener('resize', h);
+  }, []);
+  return isMobile;
+};
 import SequenceStatus from '../components/EmailHub/SequenceStatus'
 import DomainHealth from '../components/EmailHub/DomainHealth'
 import { getEmails } from '../api'
 
 export default function EmailHubPage() {
+  const isMobile = useIsMobile();
   const [emails, setEmails] = useState([]);
   const [sequences, setSequences] = useState([]);
   const [domains, setDomains] = useState([]);
@@ -44,7 +55,7 @@ export default function EmailHubPage() {
 
   return (
     <div>
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 'var(--space-sm)' }}>
         <div>
           <h1>Email Hub</h1>
           <p>Instantly.ai email campaigns, account health, and email timeline</p>
@@ -82,6 +93,34 @@ export default function EmailHubPage() {
             <p style={{ color: 'var(--text-tertiary)', textAlign: 'center', padding: 'var(--space-3xl)' }}>
               No emails sent yet. Configure Instantly.ai in Settings and approve outreach to start sending.
             </p>
+          ) : isMobile ? (
+            /* Mobile: Card view for emails */
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)', padding: 'var(--space-sm)' }}>
+              {filteredEmails.map(email => (
+                <div key={email.id} style={{
+                  background: 'var(--bg-card-elevated)',
+                  border: '1px solid var(--border-default)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: 'var(--space-md)',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-xs)' }}>
+                    <span style={{ fontWeight: 600, fontSize: '13px' }}>{email.business_name || `Lead #${email.lead_id}`}</span>
+                    <span className={`badge ${
+                      email.status === 'replied' ? 'badge-meeting_booked' :
+                      email.status === 'opened' ? 'badge-interested' :
+                      email.status === 'bounced' ? 'badge-dead' :
+                      'badge-contacted'
+                    }`}>
+                      {email.status}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'flex', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
+                    {email.sequence_name && <span>{email.sequence_name}</span>}
+                    <span>Sent: {email.sent_at?.split('T')[0] || '-'}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
           ) : (
             <table className="data-table">
               <thead>

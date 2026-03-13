@@ -38,6 +38,7 @@ export default function DomainHealth({ domains, error }) {
             No email accounts found in Instantly.ai.
           </p>
         ) : (
+          <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
           <table className="data-table">
             <thead>
               <tr>
@@ -85,6 +86,7 @@ export default function DomainHealth({ domains, error }) {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>

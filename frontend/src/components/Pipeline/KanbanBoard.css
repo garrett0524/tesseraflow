@@ -126,3 +126,45 @@
   font-family: var(--font-mono);
   font-size: 11px;
 }
+
+/* ── Mobile: Kanban horizontal swipe ── */
+@media (max-width: 768px) {
+  .kanban-board {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x mandatory;
+    gap: var(--space-sm);
+    padding-bottom: var(--space-sm);
+    margin-bottom: var(--space-lg);
+  }
+
+  .kanban-column {
+    min-width: 260px;
+    max-width: 260px;
+    flex: 0 0 260px;
+    scroll-snap-align: start;
+    max-height: 300px;
+  }
+
+  .kanban-card {
+    padding: 10px 12px;
+  }
+
+  .kanban-card:hover {
+    transform: none;
+    box-shadow: var(--shadow-card);
+  }
+
+  .kanban-card:active {
+    transform: scale(0.98);
+  }
+}
+
+@media (max-width: 480px) {
+  .kanban-column {
+    min-width: 230px;
+    max-width: 230px;
+    flex: 0 0 230px;
+  }
+}

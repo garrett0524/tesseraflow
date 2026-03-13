@@ -1,6 +1,6 @@
-import { useState } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, BarChart3, Calendar, Mail, Globe, Settings, Megaphone, Phone, LogOut, KeyRound } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { NavLink, useNavigate, useLocation } from 'react-router-dom'
+import { LayoutDashboard, BarChart3, Calendar, Mail, Globe, Settings, Megaphone, Phone, LogOut, KeyRound, Menu, X } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { changePassword } from '../../api'
 import './Navbar.css'
@@ -22,12 +22,19 @@ const comingSoonItems = [
 export default function Navbar() {
   const { user, logout, isAdmin } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const [pwForm, setPwForm] = useState({ current: '', new: '', confirm: '' });
   const [pwError, setPwError] = useState('');
   const [pwSuccess, setPwSuccess] = useState('');
   const [pwLoading, setPwLoading] = useState(false);
+
+  // Close mobile sidebar on route change
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location.pathname]);
 
   // Filter nav items by role
   const navItems = allNavItems.filter(item => !item.adminOnly || isAdmin);
@@ -71,9 +78,38 @@ export default function Navbar() {
     ? user.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
     : '??';
 
+  // Get current page title for mobile header
+  const currentPageTitle = (() => {
+    const allItems = [...allNavItems, ...comingSoonItems];
+    const match = allItems.find(item =>
+      item.path === '/' ? location.pathname === '/' : location.pathname.startsWith(item.path)
+    );
+    return match?.label || 'TesseraFlow';
+  })();
+
   return (
     <>
-      <nav className="sidebar">
+      {/* Mobile header bar */}
+      <div className="mobile-header">
+        <button
+          className="mobile-hamburger"
+          onClick={() => setMobileOpen(true)}
+          aria-label="Open menu"
+        >
+          <Menu size={22} strokeWidth={2} />
+        </button>
+        <div className="mobile-header-brand">
+          <div className="sidebar-logo" style={{ width: '28px', height: '28px', fontSize: '11px' }}>TF</div>
+          <span className="mobile-header-title">{currentPageTitle}</span>
+        </div>
+      </div>
+
+      {/* Mobile sidebar overlay */}
+      {mobileOpen && (
+        <div className="mobile-sidebar-overlay" onClick={() => setMobileOpen(false)} />
+      )}
+
+      <nav className={`sidebar ${mobileOpen ? 'sidebar-mobile-open' : ''}`}>
         <div className="sidebar-header">
           <div className="sidebar-logo">TF</div>
           <div>
@@ -81,6 +117,13 @@ export default function Navbar() {
             <div className="sidebar-subtitle">Lead Pipeline</div>
             <div className="sidebar-accent-line" />
           </div>
+          <button
+            className="mobile-sidebar-close"
+            onClick={() => setMobileOpen(false)}
+            aria-label="Close menu"
+          >
+            <X size={20} strokeWidth={2} />
+          </button>
         </div>
         <ul className="sidebar-nav">
           {navItems.map(item => {

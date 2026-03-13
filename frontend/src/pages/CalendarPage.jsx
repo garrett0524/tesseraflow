@@ -54,6 +54,20 @@ export default function CalendarPage() {
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+
+  useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth <= 768;
+      setIsMobile(mobile);
+      // If on week view and switching to mobile, go to month
+      if (mobile && view === 'week') {
+        setView('month');
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [view]);
 
   const fetchEvents = useCallback(async () => {
     try {
@@ -173,11 +187,11 @@ export default function CalendarPage() {
         gap: 'var(--space-sm)',
       }}>
         {/* Navigation */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
-          <button style={navBtnStyle} onClick={handlePrev}>&lt;</button>
-          <button style={navBtnStyle} onClick={handleToday}>Today</button>
-          <button style={navBtnStyle} onClick={handleNext}>&gt;</button>
-          <span style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: '16px', marginLeft: 'var(--space-sm)', letterSpacing: '-0.2px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+          <button style={{ ...navBtnStyle, minHeight: '44px' }} onClick={handlePrev}>&lt;</button>
+          <button style={{ ...navBtnStyle, minHeight: '44px' }} onClick={handleToday}>Today</button>
+          <button style={{ ...navBtnStyle, minHeight: '44px' }} onClick={handleNext}>&gt;</button>
+          <span style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: isMobile ? '14px' : '16px', marginLeft: 'var(--space-sm)', letterSpacing: '-0.2px' }}>
             {getHeaderLabel()}
           </span>
         </div>
@@ -186,7 +200,7 @@ export default function CalendarPage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
           <div style={{ display: 'flex', gap: '2px', background: 'var(--bg-card-elevated)', borderRadius: 'var(--radius-md)', padding: '2px', border: '1px solid var(--border-default)' }}>
             <button style={btnStyle(view === 'month')} onClick={() => setView('month')}>Month</button>
-            <button style={btnStyle(view === 'week')} onClick={() => setView('week')}>Week</button>
+            {!isMobile && <button style={btnStyle(view === 'week')} onClick={() => setView('week')}>Week</button>}
             <button style={btnStyle(view === 'day')} onClick={() => setView('day')}>Day</button>
             <button style={btnStyle(view === 'list')} onClick={() => setView('list')}>List</button>
           </div>
@@ -211,7 +225,7 @@ export default function CalendarPage() {
         ) : (
           <>
             {view === 'month' && (
-              <MonthView events={events} currentDate={currentDate} onEventClick={handleEventClick} onDayClick={handleDayClick} />
+              <MonthView events={events} currentDate={currentDate} onEventClick={handleEventClick} onDayClick={handleDayClick} isMobile={isMobile} />
             )}
             {view === 'week' && (
               <WeekView events={events} currentDate={currentDate} onEventClick={handleEventClick} />

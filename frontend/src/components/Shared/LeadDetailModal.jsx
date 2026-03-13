@@ -3,6 +3,16 @@ import { getLeadRecordings, createCalendarEvent } from '../../api'
 import RecordingWidget from '../Recording/RecordingWidget'
 import CallAnalysis from '../Recording/CallAnalysis'
 
+const useIsMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  useEffect(() => {
+    const h = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', h);
+    return () => window.removeEventListener('resize', h);
+  }, []);
+  return isMobile;
+};
+
 const STAGES = [
   { key: 'new', label: 'New' },
   { key: 'contacted', label: 'Contacted' },
@@ -26,6 +36,7 @@ const EVENT_TYPES = [
 ];
 
 export default function LeadDetailModal({ lead, onClose, onSave }) {
+  const isMobile = useIsMobile();
   const [stage, setStage] = useState(lead.pipeline_stage || 'new');
   const [notes, setNotes] = useState(lead.notes || '');
   const [saving, setSaving] = useState(false);
@@ -152,7 +163,7 @@ export default function LeadDetailModal({ lead, onClose, onSave }) {
         </button>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
         <div>
           <label style={labelStyle}>Event Type</label>
           <select value={scheduleForm.event_type} onChange={e => handleScheduleChange('event_type', e.target.value)} style={inputStyle}>
@@ -165,7 +176,7 @@ export default function LeadDetailModal({ lead, onClose, onSave }) {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
         <div>
           <label style={labelStyle}>Date</label>
           <input type="date" value={scheduleForm.event_date} onChange={e => handleScheduleChange('event_date', e.target.value)} style={inputStyle} />
@@ -209,14 +220,42 @@ export default function LeadDetailModal({ lead, onClose, onSave }) {
     <div className="modal-overlay" onClick={handleOverlayClick}>
       <div className="modal-content" style={{ maxWidth: '720px' }}>
         {/* Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--space-lg)' }}>
-          <div>
-            <h2>{lead.business_name}</h2>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '4px' }}>
-              {lead.category || 'Uncategorized'} {lead.city && ` | ${lead.city}, ${lead.state || 'NY'}`}
-            </p>
-          </div>
-          <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}>
+        {isMobile ? (
+          /* Mobile header with back arrow */
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--space-sm)',
+            marginBottom: 'var(--space-lg)',
+            paddingBottom: 'var(--space-md)',
+            borderBottom: '1px solid var(--border-default)',
+          }}>
+            <button
+              onClick={onClose}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-primary)',
+                fontSize: '20px',
+                cursor: 'pointer',
+                padding: '8px',
+                minWidth: '44px',
+                minHeight: '44px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+              aria-label="Go back"
+            >
+              &#8592;
+            </button>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <h2 style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lead.business_name}</h2>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>
+                {lead.category || 'Uncategorized'}
+              </p>
+            </div>
             <button
               className="btn btn-sm"
               onClick={() => setShowSchedule(!showSchedule)}
@@ -225,17 +264,44 @@ export default function LeadDetailModal({ lead, onClose, onSave }) {
                 color: showSchedule ? 'white' : 'var(--accent-primary)',
                 border: `1px solid var(--accent-primary)`,
                 fontWeight: 600,
-                fontSize: '13px',
-                padding: '6px 14px',
+                fontSize: '12px',
+                padding: '6px 10px',
+                flexShrink: 0,
               }}
             >
               Schedule
             </button>
-            <button className="btn btn-ghost" onClick={onClose} style={{ fontSize: '18px', padding: '4px 8px' }}>
-              &#10005;
-            </button>
           </div>
-        </div>
+        ) : (
+          /* Desktop header */
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--space-lg)' }}>
+            <div>
+              <h2>{lead.business_name}</h2>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '4px' }}>
+                {lead.category || 'Uncategorized'} {lead.city && ` | ${lead.city}, ${lead.state || 'NY'}`}
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'center' }}>
+              <button
+                className="btn btn-sm"
+                onClick={() => setShowSchedule(!showSchedule)}
+                style={{
+                  background: showSchedule ? 'var(--accent-primary)' : 'transparent',
+                  color: showSchedule ? 'white' : 'var(--accent-primary)',
+                  border: `1px solid var(--accent-primary)`,
+                  fontWeight: 600,
+                  fontSize: '13px',
+                  padding: '6px 14px',
+                }}
+              >
+                Schedule
+              </button>
+              <button className="btn btn-ghost" onClick={onClose} style={{ fontSize: '18px', padding: '4px 8px' }}>
+                &#10005;
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Schedule panel (visible on both tabs) */}
         {schedulePanel}
@@ -276,7 +342,7 @@ export default function LeadDetailModal({ lead, onClose, onSave }) {
         {activeTab === 'details' && (
           <>
             {/* Info Grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-lg)', marginBottom: 'var(--space-xl)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 'var(--space-lg)', marginBottom: 'var(--space-xl)' }}>
               <InfoField label="Address" value={lead.address ? `${lead.address}, ${lead.city || ''} ${lead.state || ''} ${lead.zip || ''}` : '-'} />
               <InfoField label="Phone" value={lead.phone || '-'} />
               <InfoField label="Website" value={lead.website ? <a href={lead.website} target="_blank" rel="noreferrer">{lead.website}</a> : '-'} />
@@ -345,9 +411,9 @@ export default function LeadDetailModal({ lead, onClose, onSave }) {
             )}
 
             {/* Actions */}
-            <div style={{ display: 'flex', gap: 'var(--space-sm)', justifyContent: 'flex-end' }}>
-              <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-              <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+            <div style={{ display: 'flex', gap: 'var(--space-sm)', justifyContent: isMobile ? 'stretch' : 'flex-end', flexDirection: isMobile ? 'column' : 'row' }}>
+              <button className="btn btn-secondary" onClick={onClose} style={isMobile ? { width: '100%' } : {}}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleSave} disabled={saving} style={isMobile ? { width: '100%' } : {}}>
                 {saving ? 'Saving...' : 'Save Changes'}
               </button>
             </div>
