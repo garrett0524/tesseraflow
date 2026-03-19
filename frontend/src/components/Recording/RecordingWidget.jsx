@@ -174,7 +174,7 @@ export default function RecordingWidget({ leadId, onRecordingComplete }) {
   }
 
   const pollForCompletion = async (recordingId) => {
-    const API_BASE = 'http://localhost:3001/api'
+    const API_BASE = import.meta.env.PROD ? '/api' : 'http://localhost:3001/api'
     let attempts = 0
     const maxAttempts = 120 // 2 minutes at 1s intervals
 

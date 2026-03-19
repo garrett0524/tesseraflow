@@ -42,7 +42,8 @@ export default function ScraperControl({ onScraperDone }) {
 
   const handleCSVExport = async () => {
     try {
-      const response = await fetch('http://localhost:3001/api/leads/export/csv');
+      const API_BASE = import.meta.env.PROD ? '/api' : 'http://localhost:3001/api';
+      const response = await fetch(`${API_BASE}/leads/export/csv`, { credentials: 'include' });
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');

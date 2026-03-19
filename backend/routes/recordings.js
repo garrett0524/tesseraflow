@@ -285,7 +285,7 @@ router.post('/upload', upload.single('audio'), async (req, res) => {
     }
 
     const audioPath = req.file.path;
-    const relativePath = path.relative(path.join(__dirname, '..'), audioPath);
+    const relativePath = path.relative(path.join(__dirname, '..'), audioPath).replace(/\\/g, '/');
 
     const { rows: [newRec] } = await query(
       `INSERT INTO recordings (lead_id, user_id, audio_path, status) VALUES ($1, $2, $3, 'transcribing') RETURNING id`,

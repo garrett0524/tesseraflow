@@ -117,7 +117,7 @@ export default function CallAnalysis({ recording, onLeadUpdated }) {
         <div style={{ marginBottom: 'var(--space-lg)' }}>
           <audio
             controls
-            src={`http://localhost:3001/${recording.audio_path}`}
+            src={`${import.meta.env.PROD ? '' : 'http://localhost:3001'}/${recording.audio_path.replace(/\\/g, '/')}`}
             style={{ width: '100%', height: '36px', borderRadius: 'var(--radius-md)' }}
           />
         </div>
