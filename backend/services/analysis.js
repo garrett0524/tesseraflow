@@ -8,6 +8,21 @@
 const { query } = require('../database/pg');
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
+const SYSTEM_PROMPT = 'You are a JSON-only response bot. Respond with ONLY a valid JSON object. No preamble, no markdown backticks, no explanation before or after. Start your response with { and end with }.';
+
+function extractJSON(raw) {
+  const first = raw.indexOf('{');
+  const last = raw.lastIndexOf('}');
+  if (first === -1 || last === -1 || last <= first) {
+    throw new Error(`No JSON object found in response: ${raw.substring(0, 200)}`);
+  }
+  const jsonStr = raw.substring(first, last + 1);
+  try {
+    return JSON.parse(jsonStr);
+  } catch (e) {
+    throw new Error(`Failed to parse JSON: ${e.message} — raw response: ${raw.substring(0, 200)}`);
+  }
+}
 
 const MODEL_MAP = {
   'haiku': 'claude-haiku-4-5-20251001',
@@ -83,6 +98,7 @@ ${transcript}`;
     body: JSON.stringify({
       model: modelId,
       max_tokens: 1500,
+      system: SYSTEM_PROMPT,
       messages: [
         {
           role: 'user',
@@ -103,13 +119,7 @@ ${transcript}`;
     throw new Error('No text content in Anthropic API response');
   }
 
-  let jsonText = textContent.text.trim();
-  if (jsonText.startsWith('```')) {
-    jsonText = jsonText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-  }
-
-  const analysis = JSON.parse(jsonText);
-  return analysis;
+  return extractJSON(textContent.text);
 }
 
 async function generateCoachingReport(recordings) {
@@ -150,6 +160,7 @@ ${callSummaries}`;
     body: JSON.stringify({
       model: modelId,
       max_tokens: 2000,
+      system: SYSTEM_PROMPT,
       messages: [
         {
           role: 'user',
@@ -170,12 +181,7 @@ ${callSummaries}`;
     throw new Error('No text content in Anthropic API response');
   }
 
-  let jsonText = textContent.text.trim();
-  if (jsonText.startsWith('```')) {
-    jsonText = jsonText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-  }
-
-  return JSON.parse(jsonText);
+  return extractJSON(textContent.text);
 }
 
 module.exports = {
