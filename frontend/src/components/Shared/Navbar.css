@@ -21,15 +21,8 @@
 .sidebar-logo {
   width: 36px;
   height: 36px;
-  background: var(--gradient-primary);
   border-radius: var(--radius-md);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--font-heading);
-  font-weight: 700;
-  font-size: 14px;
-  color: white;
+  object-fit: contain;
   flex-shrink: 0;
 }
 

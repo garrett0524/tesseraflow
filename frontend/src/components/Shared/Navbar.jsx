@@ -3,6 +3,7 @@ import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { LayoutDashboard, BarChart3, Calendar, Mail, Globe, Settings, Megaphone, Phone, LogOut, KeyRound, Menu, X } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { changePassword } from '../../api'
+const tesseraIcon = '/logo-white.png'
 import './Navbar.css'
 
 const allNavItems = [
@@ -99,7 +100,7 @@ export default function Navbar() {
           <Menu size={22} strokeWidth={2} />
         </button>
         <div className="mobile-header-brand">
-          <div className="sidebar-logo" style={{ width: '28px', height: '28px', fontSize: '11px' }}>TF</div>
+          <img src={tesseraIcon} alt="TesseraFlow" className="sidebar-logo" style={{ width: '28px', height: '28px' }} />
           <span className="mobile-header-title">{currentPageTitle}</span>
         </div>
       </div>
@@ -111,7 +112,7 @@ export default function Navbar() {
 
       <nav className={`sidebar ${mobileOpen ? 'sidebar-mobile-open' : ''}`}>
         <div className="sidebar-header">
-          <div className="sidebar-logo">TF</div>
+          <img src={tesseraIcon} alt="TesseraFlow" className="sidebar-logo" />
           <div>
             <div className="sidebar-title">TesseraFlow</div>
             <div className="sidebar-subtitle">Lead Pipeline</div>

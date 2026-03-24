@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import tesseraIcon from '../assets/icon-white-transparent.png';
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');
@@ -41,47 +42,50 @@ export default function LoginPage() {
         {/* Logo */}
         <div style={{
           textAlign: 'center',
-          marginBottom: 'var(--space-2xl)',
+          marginBottom: '40px',
         }}>
           <div style={{
-            display: 'inline-flex',
+            display: 'flex',
+            flexDirection: 'column',
             alignItems: 'center',
-            gap: 'var(--space-md)',
-            marginBottom: 'var(--space-md)',
+            gap: '20px',
           }}>
             <div style={{
-              width: '44px',
-              height: '44px',
-              borderRadius: 'var(--radius-lg)',
-              background: 'linear-gradient(135deg, var(--color-primary), var(--color-primary-hover))',
+              width: '80px',
+              height: '80px',
+              borderRadius: '20px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontWeight: 800,
-              fontSize: '18px',
-              color: '#fff',
-              letterSpacing: '-0.5px',
+              background: 'radial-gradient(circle at 50% 50%, rgba(99, 102, 241, 0.15), transparent 70%)',
+              filter: 'drop-shadow(0 0 24px rgba(99, 102, 241, 0.3))',
             }}>
-              TF
+              <img src={tesseraIcon} alt="TesseraFlow" style={{
+                width: '72px',
+                height: '72px',
+                objectFit: 'contain',
+              }} />
             </div>
             <div>
               <div style={{
                 fontFamily: 'var(--font-heading)',
-                fontSize: '22px',
-                fontWeight: 700,
+                fontSize: '28px',
+                fontWeight: 600,
                 color: 'var(--text-primary)',
                 letterSpacing: '-0.5px',
+                marginBottom: '8px',
               }}>
                 TesseraFlow
               </div>
+              <p style={{
+                fontSize: '14px',
+                color: 'var(--text-tertiary)',
+                margin: 0,
+              }}>
+                Sign in to your account
+              </p>
             </div>
           </div>
-          <p style={{
-            fontSize: '14px',
-            color: 'var(--text-tertiary)',
-          }}>
-            Sign in to your account
-          </p>
         </div>
 
         {/* Login Card */}
