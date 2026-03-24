@@ -220,6 +220,10 @@ export const applyAISuggestions = (recordingId) => fetchApi(`/recordings/${recor
   method: 'POST',
 });
 
+export const reanalyzeRecording = (recordingId) => fetchApi(`/recordings/${recordingId}/reanalyze`, {
+  method: 'POST',
+});
+
 // Calendar
 export const getCalendarEvents = (params = {}) => {
   const query = new URLSearchParams(params).toString();

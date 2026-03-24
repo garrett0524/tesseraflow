@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { applyAISuggestions } from '../../api'
+import { applyAISuggestions, reanalyzeRecording } from '../../api'
 
 const OUTCOME_COLORS = {
   interested: 'var(--color-success)',
@@ -17,14 +17,27 @@ const EFFECTIVENESS_COLORS = {
   ineffective: 'var(--color-error)',
 }
 
-export default function CallAnalysis({ recording, onLeadUpdated }) {
+export default function CallAnalysis({ recording, onLeadUpdated, onRecordingUpdated }) {
   const [applying, setApplying] = useState(false)
   const [applied, setApplied] = useState(false)
+  const [reanalyzing, setReanalyzing] = useState(false)
   const [showTranscript, setShowTranscript] = useState(false)
 
   if (!recording) return null
 
   const hasAnalysis = recording.ai_summary || recording.ai_score
+
+  const handleReanalyze = async () => {
+    setReanalyzing(true)
+    try {
+      await reanalyzeRecording(recording.id)
+      if (onRecordingUpdated) onRecordingUpdated()
+    } catch (err) {
+      console.error('Reanalysis failed:', err)
+    } finally {
+      setReanalyzing(false)
+    }
+  }
 
   const handleApplySuggestions = async () => {
     setApplying(true)
@@ -311,6 +324,20 @@ export default function CallAnalysis({ recording, onLeadUpdated }) {
         </div>
       )}
 
+      {/* Reanalyze button for completed recordings */}
+      {hasAnalysis && recording.status === 'complete' && recording.transcript && (
+        <div style={{ marginTop: 'var(--space-sm)', textAlign: 'center' }}>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={handleReanalyze}
+            disabled={reanalyzing}
+            style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}
+          >
+            {reanalyzing ? 'Reanalyzing...' : 'Reanalyze Call'}
+          </button>
+        </div>
+      )}
+
       {/* No analysis available */}
       {!hasAnalysis && recording.status === 'complete' && (
         <div style={{
@@ -319,7 +346,18 @@ export default function CallAnalysis({ recording, onLeadUpdated }) {
           color: 'var(--text-tertiary)',
           fontSize: '13px'
         }}>
-          No AI analysis available. Configure Anthropic API key in Settings.
+          <p style={{ marginBottom: 'var(--space-sm)' }}>No AI analysis available.</p>
+          {recording.transcript ? (
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={handleReanalyze}
+              disabled={reanalyzing}
+            >
+              {reanalyzing ? 'Analyzing...' : 'Run AI Analysis'}
+            </button>
+          ) : (
+            <span>Configure Anthropic API key in Settings.</span>
+          )}
         </div>
       )}
 
@@ -343,9 +381,23 @@ export default function CallAnalysis({ recording, onLeadUpdated }) {
           background: 'rgba(239, 68, 68, 0.1)',
           borderRadius: 'var(--radius-sm)',
           fontSize: '12px',
-          color: 'var(--color-error)'
+          color: 'var(--color-error)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 'var(--space-md)'
         }}>
-          {recording.error_message}
+          <span>{recording.error_message}</span>
+          {recording.transcript && (
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={handleReanalyze}
+              disabled={reanalyzing}
+              style={{ flexShrink: 0 }}
+            >
+              {reanalyzing ? 'Retrying...' : 'Retry Analysis'}
+            </button>
+          )}
         </div>
       )}
     </div>

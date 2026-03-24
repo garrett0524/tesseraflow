@@ -326,6 +326,64 @@ router.post('/coaching', async (req, res) => {
   }
 });
 
+// POST /api/recordings/:id/reanalyze
+router.post('/:id/reanalyze', async (req, res) => {
+  try {
+    const { rows: [recording] } = await query('SELECT * FROM recordings WHERE id = $1', [Number(req.params.id)]);
+    if (!recording) {
+      return res.status(404).json({ error: 'Recording not found' });
+    }
+    if (!recording.transcript) {
+      return res.status(400).json({ error: 'No transcript available to analyze' });
+    }
+
+    // Reset analysis fields and set status to analyzing
+    await query(
+      `UPDATE recordings SET
+        status = 'analyzing',
+        error_message = NULL,
+        ai_summary = NULL, ai_objections = NULL, ai_sentiment = NULL,
+        ai_outcome = NULL, ai_pitch_feedback = NULL, ai_score = NULL,
+        ai_key_info = NULL, ai_auto_update = NULL
+      WHERE id = $1`,
+      [recording.id]
+    );
+
+    res.json({ message: 'Reanalysis started' });
+
+    // Run analysis in the background
+    try {
+      const analysis = await analyzeTranscript(recording.transcript);
+      await query(
+        `UPDATE recordings SET
+          ai_summary = $1, ai_objections = $2, ai_sentiment = $3,
+          ai_outcome = $4, ai_pitch_feedback = $5, ai_score = $6,
+          ai_key_info = $7, ai_auto_update = $8, status = 'complete', error_message = NULL
+        WHERE id = $9`,
+        [
+          analysis.summary || null,
+          JSON.stringify(analysis.objections || []),
+          JSON.stringify(analysis.sentiment || {}),
+          analysis.outcome || null,
+          JSON.stringify(analysis.pitch_feedback || {}),
+          analysis.call_quality_score || null,
+          JSON.stringify(analysis.key_info_captured || {}),
+          JSON.stringify(analysis.auto_update || {}),
+          recording.id
+        ]
+      );
+    } catch (err) {
+      console.error('Reanalysis failed:', err.message);
+      await query(
+        "UPDATE recordings SET status = 'complete', error_message = $1 WHERE id = $2",
+        [`AI reanalysis failed: ${err.message}`, recording.id]
+      );
+    }
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to start reanalysis', message: err.message });
+  }
+});
+
 // POST /api/recordings/:id/apply-suggestions
 router.post('/:id/apply-suggestions', async (req, res) => {
   try {
