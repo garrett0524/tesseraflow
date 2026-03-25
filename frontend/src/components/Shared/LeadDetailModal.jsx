@@ -53,7 +53,18 @@ export default function LeadDetailModal({ lead: initialLead, onClose, onSave }) 
   const [recordings, setRecordings] = useState([]);
   const [loadingRecordings, setLoadingRecordings] = useState(false);
 
-  // Editable email fields
+  // Editable core fields
+  const [businessName, setBusinessName] = useState(lead.business_name || '');
+  const [category, setCategory] = useState(lead.category || '');
+  const [address, setAddress] = useState(lead.address || '');
+  const [city, setCity] = useState(lead.city || '');
+  const [state, setState] = useState(lead.state || 'NY');
+  const [zip, setZip] = useState(lead.zip || '');
+  const [phone, setPhone] = useState(lead.phone || '');
+  const [website, setWebsite] = useState(lead.website || '');
+  const [ownerName, setOwnerName] = useState(lead.owner_name || '');
+
+  // Editable email/contact fields
   const [email, setEmail] = useState(lead.email || '');
   const [contactName, setContactName] = useState(lead.contact_name || '');
   const [contactTitle, setContactTitle] = useState(lead.contact_title || '');
@@ -168,7 +179,23 @@ export default function LeadDetailModal({ lead: initialLead, onClose, onSave }) 
 
   const handleSave = async () => {
     setSaving(true);
-    await onSave(lead.id, { pipeline_stage: stage, notes, email, contact_name: contactName, contact_title: contactTitle, direct_phone: directPhone });
+    await onSave(lead.id, {
+      business_name: businessName,
+      category,
+      address,
+      city,
+      state,
+      zip,
+      phone,
+      website,
+      owner_name: ownerName,
+      pipeline_stage: stage,
+      notes,
+      email,
+      contact_name: contactName,
+      contact_title: contactTitle,
+      direct_phone: directPhone,
+    });
     setSaving(false);
   };
 
@@ -427,14 +454,50 @@ export default function LeadDetailModal({ lead: initialLead, onClose, onSave }) 
         {/* DETAILS TAB */}
         {activeTab === 'details' && (
           <>
-            {/* Info Grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 'var(--space-lg)', marginBottom: 'var(--space-xl)' }}>
-              <InfoField label="Address" value={lead.address ? `${lead.address}, ${lead.city || ''} ${lead.state || ''} ${lead.zip || ''}` : '-'} />
-              <InfoField label="Phone" value={lead.phone || '-'} />
-              <InfoField label="Website" value={lead.website ? <a href={lead.website} target="_blank" rel="noreferrer">{lead.website}</a> : '-'} />
-              <InfoField label="Owner/Manager" value={lead.owner_name || '-'} />
-              <InfoField label="Google Rating" value={lead.google_rating ? `${lead.google_rating} stars` : '-'} />
-              <InfoField label="Reviews" value={lead.review_count || 0} />
+            {/* Editable Lead Info */}
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 'var(--space-md)', marginBottom: 'var(--space-xl)' }}>
+              <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}>
+                <label style={labelStyle}>Business Name</label>
+                <input type="text" value={businessName} onChange={e => setBusinessName(e.target.value)} style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle}>Category</label>
+                <input type="text" value={category} onChange={e => setCategory(e.target.value)} placeholder="e.g. Restaurant, Bar, Gym" style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle}>Owner / Manager</label>
+                <input type="text" value={ownerName} onChange={e => setOwnerName(e.target.value)} placeholder="Owner name" style={inputStyle} />
+              </div>
+              <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}>
+                <label style={labelStyle}>Address</label>
+                <input type="text" value={address} onChange={e => setAddress(e.target.value)} placeholder="123 Main St" style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle}>City</label>
+                <input type="text" value={city} onChange={e => setCity(e.target.value)} style={inputStyle} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)' }}>
+                <div>
+                  <label style={labelStyle}>State</label>
+                  <input type="text" value={state} onChange={e => setState(e.target.value)} maxLength={2} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Zip</label>
+                  <input type="text" value={zip} onChange={e => setZip(e.target.value)} style={inputStyle} />
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Phone</label>
+                <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="(555) 123-4567" style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle}>Website</label>
+                <input type="text" value={website} onChange={e => setWebsite(e.target.value)} placeholder="www.example.com" style={inputStyle} />
+              </div>
+            </div>
+
+            {/* Read-only metrics */}
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : '1fr 1fr 1fr 1fr', gap: 'var(--space-md)', marginBottom: 'var(--space-xl)' }}>
               <InfoField label="Lead Score" value={
                 <span style={{
                   fontWeight: 700, fontSize: '18px',
@@ -444,12 +507,8 @@ export default function LeadDetailModal({ lead: initialLead, onClose, onSave }) 
                   {lead.lead_score || 0}
                 </span>
               } />
-              <InfoField label="Contact Attempts" value={lead.contact_attempts || 0} />
-              <InfoField label="Last Contact" value={
-                lead.last_contact_date
-                  ? `${lead.last_contact_date.split('T')[0]} via ${lead.last_contact_method || 'unknown'}`
-                  : 'Never'
-              } />
+              <InfoField label="Google Rating" value={lead.google_rating ? `${lead.google_rating} stars` : '-'} />
+              <InfoField label="Attempts" value={lead.contact_attempts || 0} />
               <InfoField label="Added" value={lead.created_at ? lead.created_at.split('T')[0] : '-'} />
             </div>
 
