@@ -225,7 +225,6 @@ async function revealPerson(apiKey, person) {
         api_key: apiKey,
         id: person.id,
         reveal_personal_emails: true,
-        reveal_phone_number: true,
       }),
     });
 
