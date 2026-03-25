@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { getLeadRecordings, createCalendarEvent } from '../../api'
+import { getLeadRecordings, createCalendarEvent, enrichLead, getInstantlyCampaigns, pushToInstantly } from '../../api'
 import RecordingWidget from '../Recording/RecordingWidget'
 import CallAnalysis from '../Recording/CallAnalysis'
 
@@ -35,8 +35,17 @@ const EVENT_TYPES = [
   { key: 'custom', label: 'Custom' },
 ];
 
-export default function LeadDetailModal({ lead, onClose, onSave }) {
+const EMAIL_STATUS_COLORS = {
+  none: { bg: 'rgba(107,114,128,0.15)', color: '#9ca3af' },
+  sent: { bg: 'rgba(59,130,246,0.15)', color: '#3b82f6' },
+  opened: { bg: 'rgba(234,179,8,0.15)', color: '#eab308' },
+  replied: { bg: 'rgba(16,185,129,0.15)', color: '#10b981' },
+  bounced: { bg: 'rgba(239,68,68,0.15)', color: '#ef4444' },
+};
+
+export default function LeadDetailModal({ lead: initialLead, onClose, onSave }) {
   const isMobile = useIsMobile();
+  const [lead, setLead] = useState(initialLead);
   const [stage, setStage] = useState(lead.pipeline_stage || 'new');
   const [notes, setNotes] = useState(lead.notes || '');
   const [saving, setSaving] = useState(false);
@@ -44,11 +53,88 @@ export default function LeadDetailModal({ lead, onClose, onSave }) {
   const [recordings, setRecordings] = useState([]);
   const [loadingRecordings, setLoadingRecordings] = useState(false);
 
+  // Editable email fields
+  const [email, setEmail] = useState(lead.email || '');
+  const [contactName, setContactName] = useState(lead.contact_name || '');
+  const [contactTitle, setContactTitle] = useState(lead.contact_title || '');
+  const [directPhone, setDirectPhone] = useState(lead.direct_phone || '');
+
+  // Apollo enrichment state
+  const [enriching, setEnriching] = useState(false);
+  const [enrichMsg, setEnrichMsg] = useState(null);
+
+  // Campaign push state
+  const [showCampaignPush, setShowCampaignPush] = useState(false);
+  const [campaigns, setCampaigns] = useState([]);
+  const [selectedCampaign, setSelectedCampaign] = useState('');
+  const [pushing, setPushing] = useState(false);
+  const [pushMsg, setPushMsg] = useState(null);
+  const [loadingCampaigns, setLoadingCampaigns] = useState(false);
+
   // Schedule form state
   const [showSchedule, setShowSchedule] = useState(false);
   const [scheduleForm, setScheduleForm] = useState(getDefaultScheduleForm());
   const [scheduleSaving, setScheduleSaving] = useState(false);
   const [scheduleMsg, setScheduleMsg] = useState(null);
+
+  const handleEnrich = async () => {
+    setEnriching(true);
+    setEnrichMsg(null);
+    try {
+      const result = await enrichLead(lead.id);
+      if (result.data?.found === false) {
+        setEnrichMsg({ type: 'warning', text: 'No contact found for this business' });
+      } else {
+        const updated = result.data;
+        setEmail(updated.email || '');
+        setContactName(updated.contact_name || '');
+        setContactTitle(updated.contact_title || '');
+        setDirectPhone(updated.direct_phone || '');
+        setLead(prev => ({ ...prev, ...updated }));
+        setEnrichMsg({ type: 'success', text: 'Enriched successfully!' });
+      }
+    } catch (err) {
+      setEnrichMsg({ type: 'error', text: err.message || 'Enrichment failed' });
+    } finally {
+      setEnriching(false);
+    }
+  };
+
+  const handleOpenCampaignPush = async () => {
+    setShowCampaignPush(true);
+    setPushMsg(null);
+    setLoadingCampaigns(true);
+    try {
+      const res = await getInstantlyCampaigns();
+      setCampaigns(res.data || []);
+    } catch (err) {
+      setPushMsg({ type: 'error', text: 'Failed to load campaigns: ' + err.message });
+    } finally {
+      setLoadingCampaigns(false);
+    }
+  };
+
+  const handlePushToCampaign = async () => {
+    if (!selectedCampaign) return;
+    setPushing(true);
+    setPushMsg(null);
+    try {
+      const res = await pushToInstantly([lead.id], selectedCampaign);
+      if (res.pushed > 0) {
+        setPushMsg({ type: 'success', text: 'Lead pushed to campaign!' });
+        setLead(prev => ({ ...prev, email_status: 'sent', instantly_campaign_id: selectedCampaign }));
+      } else if (res.skipped_no_email > 0) {
+        setPushMsg({ type: 'warning', text: 'Lead has no email. Enrich first.' });
+      } else {
+        setPushMsg({ type: 'error', text: 'Push failed' });
+      }
+      setTimeout(() => setShowCampaignPush(false), 1500);
+    } catch (err) {
+      setPushMsg({ type: 'error', text: err.message || 'Push failed' });
+    } finally {
+      setPushing(false);
+    }
+  };
 
   function getDefaultScheduleForm() {
     const tomorrow = new Date();
@@ -82,7 +168,7 @@ export default function LeadDetailModal({ lead, onClose, onSave }) {
 
   const handleSave = async () => {
     setSaving(true);
-    await onSave(lead.id, { pipeline_stage: stage, notes });
+    await onSave(lead.id, { pipeline_stage: stage, notes, email, contact_name: contactName, contact_title: contactTitle, direct_phone: directPhone });
     setSaving(false);
   };
 
@@ -365,6 +451,135 @@ export default function LeadDetailModal({ lead, onClose, onSave }) {
                   : 'Never'
               } />
               <InfoField label="Added" value={lead.created_at ? lead.created_at.split('T')[0] : '-'} />
+            </div>
+
+            {/* Email & Contact Info */}
+            <div style={{
+              marginBottom: 'var(--space-xl)',
+              padding: 'var(--space-lg)',
+              background: 'var(--bg-tertiary)',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--border-default)',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-md)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>Email & Contact</span>
+                  {lead.email_status && lead.email_status !== 'none' && (
+                    <span style={{
+                      padding: '2px 8px',
+                      borderRadius: 'var(--radius-full)',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      background: EMAIL_STATUS_COLORS[lead.email_status]?.bg || EMAIL_STATUS_COLORS.none.bg,
+                      color: EMAIL_STATUS_COLORS[lead.email_status]?.color || EMAIL_STATUS_COLORS.none.color,
+                    }}>
+                      {lead.email_status}
+                    </span>
+                  )}
+                </div>
+                <button
+                  className="btn btn-sm"
+                  onClick={handleEnrich}
+                  disabled={enriching}
+                  style={{
+                    background: 'linear-gradient(135deg, #8b5cf6, #6366f1)',
+                    color: 'white',
+                    border: 'none',
+                    fontSize: '12px',
+                    padding: '5px 12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}
+                >
+                  {enriching ? 'Enriching...' : 'Enrich with Apollo'}
+                </button>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 'var(--space-md)' }}>
+                <div>
+                  <label style={labelStyle}>Email</label>
+                  <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="email@example.com" style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Contact Name</label>
+                  <input type="text" value={contactName} onChange={e => setContactName(e.target.value)} placeholder="Owner / Manager name" style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Contact Title</label>
+                  <input type="text" value={contactTitle} onChange={e => setContactTitle(e.target.value)} placeholder="e.g. Owner, Manager" style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Direct Phone</label>
+                  <input type="tel" value={directPhone} onChange={e => setDirectPhone(e.target.value)} placeholder="Direct / mobile phone" style={inputStyle} />
+                </div>
+              </div>
+
+              {lead.enriched_at && (
+                <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: 'var(--space-sm)' }}>
+                  Last enriched: {new Date(lead.enriched_at).toLocaleDateString()}
+                </div>
+              )}
+
+              {enrichMsg && (
+                <div style={{
+                  fontSize: '12px', marginTop: 'var(--space-sm)',
+                  color: enrichMsg.type === 'success' ? 'var(--color-success)' : enrichMsg.type === 'warning' ? 'var(--color-warning)' : 'var(--color-error)',
+                }}>
+                  {enrichMsg.text}
+                </div>
+              )}
+
+              {/* Add to Campaign button */}
+              {(email || lead.email) && !lead.instantly_campaign_id && !showCampaignPush && (
+                <button
+                  className="btn btn-sm"
+                  onClick={handleOpenCampaignPush}
+                  style={{
+                    marginTop: 'var(--space-md)',
+                    background: 'transparent',
+                    border: '1px solid var(--accent-primary)',
+                    color: 'var(--accent-primary)',
+                    fontSize: '12px',
+                    padding: '5px 12px',
+                  }}
+                >
+                  Add to Campaign
+                </button>
+              )}
+              {lead.instantly_campaign_id && (
+                <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: 'var(--space-sm)' }}>
+                  In Instantly campaign
+                </div>
+              )}
+
+              {/* Campaign push inline */}
+              {showCampaignPush && (
+                <div style={{ marginTop: 'var(--space-md)', padding: 'var(--space-md)', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-default)' }}>
+                  {loadingCampaigns ? (
+                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Loading campaigns...</div>
+                  ) : (
+                    <>
+                      <label style={labelStyle}>Select Campaign</label>
+                      <select value={selectedCampaign} onChange={e => setSelectedCampaign(e.target.value)} style={{ ...inputStyle, marginBottom: 'var(--space-sm)' }}>
+                        <option value="">Select a campaign...</option>
+                        {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                      <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+                        <button className="btn btn-primary btn-sm" onClick={handlePushToCampaign} disabled={!selectedCampaign || pushing}>
+                          {pushing ? 'Pushing...' : 'Push'}
+                        </button>
+                        <button className="btn btn-secondary btn-sm" onClick={() => setShowCampaignPush(false)}>Cancel</button>
+                      </div>
+                    </>
+                  )}
+                  {pushMsg && (
+                    <div style={{ fontSize: '12px', marginTop: 'var(--space-sm)', color: pushMsg.type === 'success' ? 'var(--color-success)' : pushMsg.type === 'warning' ? 'var(--color-warning)' : 'var(--color-error)' }}>
+                      {pushMsg.text}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Pipeline Stage */}

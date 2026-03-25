@@ -29,6 +29,17 @@ app.use('/recordings', express.static(path.join(__dirname, 'recordings')));
 const authRouter = require('./routes/auth');
 app.use('/api/auth', authRouter);
 
+// Instantly webhook (no auth — receives external webhook calls)
+const { handleWebhook } = require('./services/instantly-sync');
+app.post('/api/webhooks/instantly', async (req, res) => {
+  try {
+    const result = await handleWebhook(req.body);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // All routes below require authentication
 app.use('/api', requireAuth);
 
@@ -43,6 +54,8 @@ const settingsRouter = require('./routes/settings');
 const recordingsRouter = require('./routes/recordings');
 const calendarRouter = require('./routes/calendar');
 const usersRouter = require('./routes/users');
+const apolloRouter = require('./routes/apollo');
+const instantlyPushRouter = require('./routes/instantly-push');
 
 // Mount routes (all protected by requireAuth via the app.use above)
 app.use('/api/leads', leadsRouter);
@@ -55,6 +68,8 @@ app.use('/api/settings', requireAdmin, settingsRouter);
 app.use('/api/recordings', recordingsRouter);
 app.use('/api/calendar', calendarRouter);
 app.use('/api/users', usersRouter);
+app.use('/api/apollo', apolloRouter);
+app.use('/api/instantly', instantlyPushRouter);
 
 // Production: serve frontend static build
 if (process.env.NODE_ENV === 'production') {

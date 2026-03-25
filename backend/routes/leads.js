@@ -164,7 +164,9 @@ router.put('/:id', async (req, res) => {
       'business_name', 'category', 'address', 'city', 'state', 'zip',
       'phone', 'website', 'google_rating', 'review_count', 'place_id',
       'owner_name', 'pipeline_stage', 'lead_score', 'contact_attempts',
-      'last_contact_date', 'last_contact_method', 'notes'
+      'last_contact_date', 'last_contact_method', 'notes',
+      'email', 'contact_name', 'contact_title', 'direct_phone', 'apollo_id',
+      'enriched_at', 'email_status', 'instantly_campaign_id', 'last_email_at'
     ];
 
     const updates = [];
@@ -236,6 +238,7 @@ router.post('/import', requireAdmin, upload.single('file'), async (req, res) => 
     }
 
     let imported = 0;
+    let updated = 0;
     let skipped = 0;
     let errors = [];
 
@@ -243,19 +246,25 @@ router.post('/import', requireAdmin, upload.single('file'), async (req, res) => 
       try {
         const row = records[i];
 
+        // Support both TesseraFlow and Apollo CSV column names
         const lead = {
-          business_name: row.business_name || row.name || row.businessname || row.name_for_emails || null,
+          business_name: row.business_name || row.name || row.businessname || row.name_for_emails || row.company || row.company_name || null,
           category: row.category || row.type || row.subtypes || null,
           address: row.address || row.full_address || row.street || null,
           city: row.city || row.town || null,
           state: row.state || row.state_code || 'NY',
           zip: row.zip || row.zipcode || row.postal || row.postal_code || null,
-          phone: row.phone || row.phone_number || null,
-          website: row.website || row.url || null,
+          phone: row.phone || row.phone_number || row.corporate_phone || null,
+          website: row.website || row.url || row.company_website || null,
           google_rating: parseFloat(row.google_rating || row.rating) || null,
           review_count: parseInt(row.review_count || row.reviews, 10) || 0,
           place_id: row.place_id || row.placeid || null,
           owner_name: row.owner_name || row.owner || row.contact || row.owner_title || null,
+          // Apollo-specific fields
+          email: row.email || row.email_address || null,
+          contact_name: row.contact_name || (row.first_name && row.last_name ? `${row.first_name} ${row.last_name}`.trim() : null) || row.name || null,
+          contact_title: row.contact_title || row.title || null,
+          direct_phone: row.direct_phone || row.mobile_phone || row.personal_phone || null,
         };
 
         if (!lead.business_name) {
@@ -269,24 +278,52 @@ router.post('/import', requireAdmin, upload.single('file'), async (req, res) => 
           }
         }
 
-        // Check for duplicate place_id
+        // Check for existing lead by place_id OR by business_name + city (for Apollo merge)
+        let existingId = null;
         if (lead.place_id) {
           const { rows: [existing] } = await query('SELECT id FROM leads WHERE place_id = $1', [lead.place_id]);
-          if (existing) {
+          if (existing) existingId = existing.id;
+        }
+        if (!existingId && lead.business_name && lead.city) {
+          const { rows: [existing] } = await query(
+            'SELECT id FROM leads WHERE LOWER(business_name) = LOWER($1) AND LOWER(city) = LOWER($2) LIMIT 1',
+            [lead.business_name, lead.city]
+          );
+          if (existing) existingId = existing.id;
+        }
+
+        if (existingId) {
+          // Update existing lead with new email/contact info (merge)
+          const updateFields = [];
+          const updateParams = [];
+          let pIdx = 1;
+          if (lead.email) { updateFields.push(`email = $${pIdx++}`); updateParams.push(lead.email); }
+          if (lead.contact_name) { updateFields.push(`contact_name = $${pIdx++}`); updateParams.push(lead.contact_name); }
+          if (lead.contact_title) { updateFields.push(`contact_title = $${pIdx++}`); updateParams.push(lead.contact_title); }
+          if (lead.direct_phone) { updateFields.push(`direct_phone = $${pIdx++}`); updateParams.push(lead.direct_phone); }
+          if (lead.phone && !lead.direct_phone) { updateFields.push(`phone = $${pIdx++}`); updateParams.push(lead.phone); }
+          if (updateFields.length > 0) {
+            updateFields.push('updated_at = NOW()');
+            updateParams.push(existingId);
+            await query(`UPDATE leads SET ${updateFields.join(', ')} WHERE id = $${pIdx}`, updateParams);
+            updated++;
+          } else {
             skipped++;
-            continue;
           }
+          continue;
         }
 
         const { rows: [inserted] } = await query(
           `INSERT INTO leads (business_name, category, address, city, state, zip,
-            phone, website, google_rating, review_count, place_id, owner_name)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            phone, website, google_rating, review_count, place_id, owner_name,
+            email, contact_name, contact_title, direct_phone)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
            RETURNING id`,
           [
             lead.business_name, lead.category, lead.address, lead.city,
             lead.state, lead.zip, lead.phone, lead.website,
-            lead.google_rating, lead.review_count, lead.place_id, lead.owner_name
+            lead.google_rating, lead.review_count, lead.place_id, lead.owner_name,
+            lead.email, lead.contact_name, lead.contact_title, lead.direct_phone
           ]
         );
 
@@ -306,6 +343,7 @@ router.post('/import', requireAdmin, upload.single('file'), async (req, res) => 
     res.json({
       message: 'Import complete',
       imported,
+      updated,
       skipped,
       errors: errors.length,
       errorDetails: errors.slice(0, 10)
@@ -324,7 +362,9 @@ router.get('/export/csv', async (req, res) => {
       'id', 'business_name', 'category', 'address', 'city', 'state', 'zip',
       'phone', 'website', 'google_rating', 'review_count', 'place_id',
       'owner_name', 'pipeline_stage', 'lead_score', 'contact_attempts',
-      'last_contact_date', 'last_contact_method', 'notes', 'created_at'
+      'last_contact_date', 'last_contact_method', 'notes',
+      'email', 'contact_name', 'contact_title', 'direct_phone', 'email_status',
+      'created_at'
     ];
 
     let csv = headers.join(',') + '\n';

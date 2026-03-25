@@ -11,7 +11,8 @@ const useIsMobile = () => {
 };
 import SequenceStatus from '../components/EmailHub/SequenceStatus'
 import DomainHealth from '../components/EmailHub/DomainHealth'
-import { getEmails } from '../api'
+import LeadDetailModal from '../components/Shared/LeadDetailModal'
+import { getEmails, getLeads, updateLead, syncInstantlyStatuses } from '../api'
 
 export default function EmailHubPage() {
   const isMobile = useIsMobile();
@@ -22,6 +23,10 @@ export default function EmailHubPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filterStatus, setFilterStatus] = useState('');
+  const [leadsMap, setLeadsMap] = useState({});
+  const [selectedLead, setSelectedLead] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState(null);
 
   const fetchData = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -41,7 +46,37 @@ export default function EmailHubPage() {
 
   useEffect(() => {
     fetchData();
+    // Load leads for linking
+    getLeads().then(res => {
+      const map = {};
+      for (const l of (res.data || [])) { map[l.id] = l; }
+      setLeadsMap(map);
+    }).catch(() => {});
   }, [fetchData]);
+
+  const handleSync = async () => {
+    setSyncing(true);
+    setSyncMsg(null);
+    try {
+      const res = await syncInstantlyStatuses();
+      setSyncMsg({ type: 'success', text: `Synced: ${res.synced || 0} leads, ${res.updated || 0} updated` });
+      fetchData(true);
+    } catch (err) {
+      setSyncMsg({ type: 'error', text: err.message });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handleLeadSave = async (id, data) => {
+    await updateLead(id, data);
+    setSelectedLead(null);
+    // Refresh leads map
+    const res = await getLeads();
+    const map = {};
+    for (const l of (res.data || [])) { map[l.id] = l; }
+    setLeadsMap(map);
+  };
 
   const filteredEmails = filterStatus
     ? emails.filter(e => e.status === filterStatus)
@@ -61,16 +96,65 @@ export default function EmailHubPage() {
           <p>Instantly.ai email campaigns, account health, and email timeline</p>
         </div>
         {hasApiKey && (
-          <button
-            className="btn btn-secondary"
-            onClick={() => fetchData(true)}
-            disabled={refreshing}
-            style={{ marginTop: 'var(--space-sm)' }}
-          >
-            {refreshing ? 'Refreshing...' : 'Refresh'}
-          </button>
+          <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap', marginTop: 'var(--space-sm)' }}>
+            <button
+              className="btn btn-secondary"
+              onClick={handleSync}
+              disabled={syncing}
+            >
+              {syncing ? 'Syncing...' : 'Sync Statuses'}
+            </button>
+            <button
+              className="btn btn-secondary"
+              onClick={() => fetchData(true)}
+              disabled={refreshing}
+            >
+              {refreshing ? 'Refreshing...' : 'Refresh'}
+            </button>
+          </div>
         )}
       </div>
+
+      {syncMsg && (
+        <div style={{
+          padding: 'var(--space-md)',
+          marginBottom: 'var(--space-lg)',
+          borderRadius: 'var(--radius-md)',
+          background: syncMsg.type === 'success' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+          border: `1px solid ${syncMsg.type === 'success' ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}`,
+          fontSize: '13px',
+          color: syncMsg.type === 'success' ? '#10b981' : '#ef4444',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        }}>
+          <span>{syncMsg.text}</span>
+          <button onClick={() => setSyncMsg(null)} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontSize: '16px' }}>&#10005;</button>
+        </div>
+      )}
+
+      {/* Per-lead email status breakdown */}
+      {(() => {
+        const leadsList = Object.values(leadsMap);
+        const sent = leadsList.filter(l => l.email_status === 'sent').length;
+        const opened = leadsList.filter(l => l.email_status === 'opened').length;
+        const replied = leadsList.filter(l => l.email_status === 'replied').length;
+        const bounced = leadsList.filter(l => l.email_status === 'bounced').length;
+        if (sent + opened + replied + bounced === 0) return null;
+        return (
+          <div style={{ display: 'flex', gap: 'var(--space-lg)', marginBottom: 'var(--space-xl)', flexWrap: 'wrap' }}>
+            {[
+              { label: 'Sent', count: sent, color: '#3b82f6' },
+              { label: 'Opened', count: opened, color: '#eab308' },
+              { label: 'Replied', count: replied, color: '#10b981' },
+              { label: 'Bounced', count: bounced, color: '#ef4444' },
+            ].map(s => (
+              <div key={s.label} className="card" style={{ padding: 'var(--space-md) var(--space-lg)', minWidth: '100px', textAlign: 'center' }}>
+                <div style={{ fontSize: '24px', fontWeight: 700, color: s.color }}>{s.count}</div>
+                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
 
       <SequenceStatus sequences={sequences} error={errors.sequences} />
       <DomainHealth domains={domains} error={errors.domains} />
@@ -137,7 +221,19 @@ export default function EmailHubPage() {
               <tbody>
                 {filteredEmails.map(email => (
                   <tr key={email.id}>
-                    <td style={{ fontWeight: 500 }}>{email.business_name || `Lead #${email.lead_id}`}</td>
+                    <td style={{ fontWeight: 500 }}>
+                      <button
+                        onClick={() => leadsMap[email.lead_id] && setSelectedLead(leadsMap[email.lead_id])}
+                        style={{
+                          background: 'none', border: 'none', color: 'var(--accent-primary)',
+                          cursor: leadsMap[email.lead_id] ? 'pointer' : 'default',
+                          padding: 0, fontWeight: 500, fontSize: 'inherit',
+                          textDecoration: leadsMap[email.lead_id] ? 'underline' : 'none',
+                        }}
+                      >
+                        {email.business_name || leadsMap[email.lead_id]?.business_name || `Lead #${email.lead_id}`}
+                      </button>
+                    </td>
                     <td>{email.sequence_name || '-'}</td>
                     <td style={{ textAlign: 'center' }}>{email.step_number || '-'}</td>
                     <td>
@@ -160,6 +256,14 @@ export default function EmailHubPage() {
           )}
         </div>
       </div>
+
+      {selectedLead && (
+        <LeadDetailModal
+          lead={selectedLead}
+          onClose={() => setSelectedLead(null)}
+          onSave={handleLeadSave}
+        />
+      )}
     </div>
   );
 }

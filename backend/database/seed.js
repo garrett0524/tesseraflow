@@ -187,6 +187,27 @@ async function seed() {
       // Column may already exist
     }
 
+    // Apollo enrichment & email campaign columns on leads table
+    const apolloMigrations = [
+      'ALTER TABLE leads ADD COLUMN IF NOT EXISTS email VARCHAR(255)',
+      'ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_name VARCHAR(255)',
+      'ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_title VARCHAR(255)',
+      'ALTER TABLE leads ADD COLUMN IF NOT EXISTS direct_phone VARCHAR(50)',
+      'ALTER TABLE leads ADD COLUMN IF NOT EXISTS apollo_id VARCHAR(255)',
+      'ALTER TABLE leads ADD COLUMN IF NOT EXISTS enriched_at TIMESTAMP',
+      "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_status VARCHAR(50) DEFAULT 'none'",
+      'ALTER TABLE leads ADD COLUMN IF NOT EXISTS instantly_campaign_id VARCHAR(255)',
+      'ALTER TABLE leads ADD COLUMN IF NOT EXISTS last_email_at TIMESTAMP',
+    ];
+    for (const migration of apolloMigrations) {
+      try {
+        await client.query(migration);
+      } catch (e) {
+        // Column may already exist
+      }
+    }
+    console.log('Apollo/email columns migration complete.');
+
     // Seed default admin user if no users exist
     const { rows: existingUsers } = await client.query('SELECT COUNT(*) as count FROM users');
     if (parseInt(existingUsers[0].count) === 0) {
@@ -231,6 +252,7 @@ async function seed() {
         ['google_client_secret', ''],
         ['google_refresh_token', ''],
         ['google_calendar_id', 'primary'],
+        ['apollo_api_key', ''],
       ];
 
       for (const [key, value] of defaultSettings) {

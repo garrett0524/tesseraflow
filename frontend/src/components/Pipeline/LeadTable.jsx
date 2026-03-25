@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
+import { enrichLead } from '../../api'
 import './LeadTable.css'
 
 const STAGE_LABELS = {
@@ -10,15 +11,25 @@ const STAGE_LABELS = {
   dead: 'Dead',
 };
 
-export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDir }) {
+const EMAIL_STATUS_DOT = {
+  none: '#6b7280',
+  sent: '#3b82f6',
+  opened: '#eab308',
+  replied: '#10b981',
+  bounced: '#ef4444',
+};
+
+export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDir, onLeadEnriched }) {
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [search, setSearch] = useState('');
+  const [enrichingId, setEnrichingId] = useState(null);
   const [filters, setFilters] = useState({
     category: '',
     stage: '',
     attempts: '',
     scoreMin: '',
     scoreMax: '',
+    emailStatus: '',
   });
 
   useEffect(() => {
@@ -47,6 +58,12 @@ export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDi
       }
       if (filters.scoreMin && lead.lead_score < Number(filters.scoreMin)) return false;
       if (filters.scoreMax && lead.lead_score > Number(filters.scoreMax)) return false;
+      if (filters.emailStatus) {
+        const status = lead.email_status || 'none';
+        if (filters.emailStatus === 'no_email' && lead.email) return false;
+        else if (filters.emailStatus === 'has_email' && !lead.email) return false;
+        else if (!['no_email', 'has_email'].includes(filters.emailStatus) && status !== filters.emailStatus) return false;
+      }
       return true;
     });
   }, [leads, search, filters]);
@@ -89,6 +106,15 @@ export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDi
           <option value="0">0 attempts</option>
           <option value="1-3">1-3 attempts</option>
           <option value="4+">4+ attempts</option>
+        </select>
+        <select value={filters.emailStatus} onChange={e => setFilters(f => ({...f, emailStatus: e.target.value}))}>
+          <option value="">Email Status</option>
+          <option value="no_email">No Email</option>
+          <option value="has_email">Has Email</option>
+          <option value="sent">Sent</option>
+          <option value="opened">Opened</option>
+          <option value="replied">Replied</option>
+          <option value="bounced">Bounced</option>
         </select>
         <input
           type="number"
@@ -169,6 +195,7 @@ export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDi
                 <th>Address</th>
                 <th>Phone</th>
                 <th>Owner</th>
+                <th>Email</th>
                 <th onClick={() => handleSort('pipeline_stage')}>Stage <SortIcon field="pipeline_stage" /></th>
                 <th onClick={() => handleSort('last_contact_date')}>Last Contact <SortIcon field="last_contact_date" /></th>
                 <th onClick={() => handleSort('contact_attempts')}>Attempts <SortIcon field="contact_attempts" /></th>
@@ -179,7 +206,7 @@ export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDi
             <tbody>
               {filteredLeads.length === 0 ? (
                 <tr>
-                  <td colSpan={10} style={{ textAlign: 'center', color: 'var(--text-tertiary)', padding: 'var(--space-3xl)' }}>
+                  <td colSpan={11} style={{ textAlign: 'center', color: 'var(--text-tertiary)', padding: 'var(--space-3xl)' }}>
                     {leads.length === 0 ? 'No leads yet — run a scrape or import CSV' : 'No leads match filters'}
                   </td>
                 </tr>
@@ -193,6 +220,34 @@ export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDi
                     </td>
                     <td style={{ fontFamily: 'var(--font-mono)', fontSize: '13px' }}>{lead.phone || '-'}</td>
                     <td>{lead.owner_name || '-'}</td>
+                    <td style={{ maxWidth: '180px' }}>
+                      {lead.email ? (
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px' }}>
+                          <span style={{
+                            width: '7px', height: '7px', borderRadius: '50%', flexShrink: 0,
+                            background: EMAIL_STATUS_DOT[lead.email_status || 'none'] || EMAIL_STATUS_DOT.none,
+                          }} />
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lead.email}</span>
+                        </span>
+                      ) : (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEnrichingId(lead.id);
+                            enrichLead(lead.id).then(() => {
+                              if (onLeadEnriched) onLeadEnriched();
+                            }).catch(() => {}).finally(() => setEnrichingId(null));
+                          }}
+                          disabled={enrichingId === lead.id}
+                          style={{
+                            background: 'none', border: 'none', color: '#8b5cf6', cursor: 'pointer',
+                            fontSize: '12px', padding: 0, textDecoration: 'underline',
+                          }}
+                        >
+                          {enrichingId === lead.id ? 'Enriching...' : 'Enrich'}
+                        </button>
+                      )}
+                    </td>
                     <td>
                       <span className={`badge badge-${lead.pipeline_stage}`}>
                         {STAGE_LABELS[lead.pipeline_stage] || lead.pipeline_stage}

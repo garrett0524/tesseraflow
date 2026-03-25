@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react'
 import {
   getSettings, updateSettings, getGoogleCalendarAuthUrl, getGoogleCalendarStatus,
   disconnectGoogleCalendar, getGoogleCalendars, syncAllToGoogle,
-  getUsers, createUser, updateUser, resetUserPassword, changePassword
+  getUsers, createUser, updateUser, resetUserPassword, changePassword,
+  getApolloStatus
 } from '../../api'
 import { useAuth } from '../../contexts/AuthContext'
 
@@ -46,6 +47,10 @@ export default function SettingsPanel() {
   const [userMessage, setUserMessage] = useState(null);
   const [editingUser, setEditingUser] = useState(null);
   const [tempPassword, setTempPassword] = useState(null);
+
+  // Apollo status
+  const [apolloTesting, setApolloTesting] = useState(false);
+  const [apolloStatus, setApolloStatus] = useState(null);
 
   // Change Password state
   const [pwForm, setPwForm] = useState({ current: '', newPw: '', confirm: '' });
@@ -502,6 +507,48 @@ export default function SettingsPanel() {
         <Field label="API Key">
           <input type="password" value={settings.instantly_api_key || ''} onChange={e => handleChange('instantly_api_key', e.target.value)} placeholder="Enter Instantly.ai API key" />
         </Field>
+      </Section>
+
+      {/* Apollo.io */}
+      <Section title="Apollo.io (Lead Enrichment)">
+        <Field label="API Key">
+          <input type="password" value={settings.apollo_api_key || ''} onChange={e => handleChange('apollo_api_key', e.target.value)} placeholder="Enter Apollo API key" />
+        </Field>
+        <Field label="Test Connection">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
+            <button
+              className="btn btn-secondary"
+              onClick={async () => {
+                setApolloTesting(true);
+                setApolloStatus(null);
+                try {
+                  // Save key first so the backend can use it
+                  await updateSettings({ apollo_api_key: settings.apollo_api_key || '' });
+                  const res = await getApolloStatus();
+                  setApolloStatus(res.data || res);
+                } catch (err) {
+                  setApolloStatus({ valid: false, message: err.message });
+                } finally {
+                  setApolloTesting(false);
+                }
+              }}
+              disabled={apolloTesting || !settings.apollo_api_key}
+            >
+              {apolloTesting ? 'Testing...' : 'Test Connection'}
+            </button>
+            {apolloStatus && (
+              <span style={{
+                fontSize: '13px',
+                color: apolloStatus.valid ? 'var(--color-success)' : 'var(--color-error)',
+              }}>
+                {apolloStatus.valid ? 'Connected' : apolloStatus.message || 'Invalid key'}
+              </span>
+            )}
+          </div>
+        </Field>
+        <p style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>
+          Get your API key from app.apollo.io &rarr; Settings &rarr; API Keys
+        </p>
       </Section>
 
       {/* Scraper */}

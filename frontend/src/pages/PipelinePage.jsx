@@ -1,10 +1,10 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import StatsBar from '../components/Shared/StatsBar'
 import KanbanBoard from '../components/Pipeline/KanbanBoard'
 import LeadTable from '../components/Pipeline/LeadTable'
 import LeadDetailModal from '../components/Shared/LeadDetailModal'
 import TodayScheduleWidget from '../components/Calendar/TodayScheduleWidget'
-import { getLeads, updateLead, createLead } from '../api'
+import { getLeads, updateLead, createLead, enrichBulk, getInstantlyCampaigns, pushFilteredToInstantly } from '../api'
 
 export default function PipelinePage() {
   const [leads, setLeads] = useState([]);
@@ -13,6 +13,75 @@ export default function PipelinePage() {
   const [sortField, setSortField] = useState('created_at');
   const [sortDir, setSortDir] = useState('desc');
   const [showAddLead, setShowAddLead] = useState(false);
+
+  // Bulk action state
+  const [showEnrichMenu, setShowEnrichMenu] = useState(false);
+  const [showPushMenu, setShowPushMenu] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState(null); // { title, message, done }
+  const [campaigns, setCampaigns] = useState([]);
+  const [showCampaignSelect, setShowCampaignSelect] = useState(false);
+  const [selectedCampaign, setSelectedCampaign] = useState('');
+  const [pushFilter, setPushFilter] = useState('');
+  const enrichMenuRef = useRef(null);
+  const pushMenuRef = useRef(null);
+
+  // Close dropdown menus on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (enrichMenuRef.current && !enrichMenuRef.current.contains(e.target)) setShowEnrichMenu(false);
+      if (pushMenuRef.current && !pushMenuRef.current.contains(e.target)) setShowPushMenu(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const handleBulkEnrich = async (filter) => {
+    setShowEnrichMenu(false);
+    setBulkProgress({ title: 'Enriching Leads', message: 'Starting enrichment...', done: false });
+    try {
+      const result = await enrichBulk({ filter });
+      setBulkProgress({
+        title: 'Enrichment Complete',
+        message: `Enriched: ${result.enriched || 0}, Not found: ${result.not_found || 0}, Already had email: ${result.already_had_email || 0}`,
+        done: true,
+      });
+      fetchLeads();
+    } catch (err) {
+      setBulkProgress({ title: 'Enrichment Failed', message: err.message, done: true });
+    }
+  };
+
+  const handleOpenPush = async (filter) => {
+    setShowPushMenu(false);
+    setPushFilter(filter);
+    setBulkProgress({ title: 'Loading Campaigns', message: 'Fetching Instantly campaigns...', done: false });
+    try {
+      const res = await getInstantlyCampaigns();
+      setCampaigns(res.data || []);
+      setBulkProgress(null);
+      setShowCampaignSelect(true);
+    } catch (err) {
+      setBulkProgress({ title: 'Failed', message: 'Could not load campaigns: ' + err.message, done: true });
+    }
+  };
+
+  const handlePushConfirm = async () => {
+    if (!selectedCampaign) return;
+    setShowCampaignSelect(false);
+    const campaignName = campaigns.find(c => c.id === selectedCampaign)?.name || 'campaign';
+    setBulkProgress({ title: 'Pushing to Instantly', message: `Pushing leads to "${campaignName}"...`, done: false });
+    try {
+      const result = await pushFilteredToInstantly(pushFilter, selectedCampaign);
+      setBulkProgress({
+        title: 'Push Complete',
+        message: `Pushed: ${result.pushed || 0}, Skipped (no email): ${result.skipped_no_email || 0}, Errors: ${result.errors || 0}`,
+        done: true,
+      });
+      fetchLeads();
+    } catch (err) {
+      setBulkProgress({ title: 'Push Failed', message: err.message, done: true });
+    }
+  };
 
   const fetchLeads = useCallback(async () => {
     try {
@@ -93,19 +162,109 @@ export default function PipelinePage() {
 
   return (
     <div style={{ animation: 'fadeInContent 0.3s ease' }}>
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 'var(--space-sm)' }}>
         <div>
           <h1>Pipeline</h1>
           <p>Lead pipeline overview</p>
         </div>
-        <button
-          className="btn btn-primary"
-          onClick={() => setShowAddLead(true)}
-          style={{ flexShrink: 0 }}
-        >
-          + Add Lead
-        </button>
+        <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap', alignItems: 'center' }}>
+          {/* Enrich dropdown */}
+          <div ref={enrichMenuRef} style={{ position: 'relative' }}>
+            <button
+              className="btn btn-secondary"
+              onClick={() => { setShowEnrichMenu(!showEnrichMenu); setShowPushMenu(false); }}
+              style={{ fontSize: '13px', background: 'linear-gradient(135deg, #8b5cf6, #6366f1)', color: 'white', border: 'none' }}
+            >
+              Enrich &#9662;
+            </button>
+            {showEnrichMenu && (
+              <div style={{
+                position: 'absolute', right: 0, top: '100%', marginTop: '4px', zIndex: 100,
+                background: 'var(--bg-card)', border: '1px solid var(--border-default)',
+                borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)',
+                minWidth: '220px', overflow: 'hidden',
+              }}>
+                <button onClick={() => handleBulkEnrich('no_email')} style={dropdownItemStyle}>Enrich All Without Email</button>
+                <button onClick={() => handleBulkEnrich('high_score')} style={dropdownItemStyle}>Enrich High Score (70+)</button>
+              </div>
+            )}
+          </div>
+
+          {/* Push to Instantly dropdown */}
+          <div ref={pushMenuRef} style={{ position: 'relative' }}>
+            <button
+              className="btn btn-secondary"
+              onClick={() => { setShowPushMenu(!showPushMenu); setShowEnrichMenu(false); }}
+              style={{ fontSize: '13px' }}
+            >
+              Push to Instantly &#9662;
+            </button>
+            {showPushMenu && (
+              <div style={{
+                position: 'absolute', right: 0, top: '100%', marginTop: '4px', zIndex: 100,
+                background: 'var(--bg-card)', border: '1px solid var(--border-default)',
+                borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)',
+                minWidth: '240px', overflow: 'hidden',
+              }}>
+                <button onClick={() => handleOpenPush('has_email_not_sent')} style={dropdownItemStyle}>Push All Ready (has email, not sent)</button>
+              </div>
+            )}
+          </div>
+
+          <button
+            className="btn btn-primary"
+            onClick={() => setShowAddLead(true)}
+            style={{ flexShrink: 0 }}
+          >
+            + Add Lead
+          </button>
+        </div>
       </div>
+
+      {/* Bulk progress modal */}
+      {bulkProgress && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }} onClick={() => bulkProgress.done && setBulkProgress(null)}>
+          <div className="card" style={{ maxWidth: '420px', width: '100%', padding: 'var(--space-2xl)', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ marginBottom: 'var(--space-md)' }}>{bulkProgress.title}</h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: 'var(--space-lg)' }}>{bulkProgress.message}</p>
+            {!bulkProgress.done && (
+              <div style={{ width: '100%', height: '4px', borderRadius: '2px', background: 'var(--bg-tertiary)', overflow: 'hidden' }}>
+                <div style={{ width: '60%', height: '100%', background: 'var(--accent-primary)', borderRadius: '2px', animation: 'pulse 1.5s ease-in-out infinite' }} />
+              </div>
+            )}
+            {bulkProgress.done && (
+              <button className="btn btn-primary" onClick={() => setBulkProgress(null)}>Close</button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Campaign selection modal */}
+      {showCampaignSelect && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }} onClick={() => setShowCampaignSelect(false)}>
+          <div className="card" style={{ maxWidth: '420px', width: '100%', padding: 'var(--space-2xl)' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ marginBottom: 'var(--space-lg)' }}>Select Campaign</h3>
+            <select
+              value={selectedCampaign}
+              onChange={e => setSelectedCampaign(e.target.value)}
+              style={{ width: '100%', marginBottom: 'var(--space-lg)' }}
+            >
+              <option value="">Select a campaign...</option>
+              {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <div style={{ display: 'flex', gap: 'var(--space-sm)', justifyContent: 'flex-end' }}>
+              <button className="btn btn-secondary" onClick={() => setShowCampaignSelect(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handlePushConfirm} disabled={!selectedCampaign}>Push Leads</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <TodayScheduleWidget />
 
@@ -123,6 +282,7 @@ export default function PipelinePage() {
         onSort={handleSort}
         sortField={sortField}
         sortDir={sortDir}
+        onLeadEnriched={fetchLeads}
       />
 
       {selectedLead && (
@@ -142,6 +302,13 @@ export default function PipelinePage() {
     </div>
   );
 }
+
+const dropdownItemStyle = {
+  display: 'block', width: '100%', textAlign: 'left',
+  padding: '10px 16px', background: 'none', border: 'none',
+  color: 'var(--text-primary)', fontSize: '13px', cursor: 'pointer',
+  borderBottom: '1px solid var(--border-default)',
+};
 
 function AddLeadModal({ onClose, onSave }) {
   const [form, setForm] = useState({

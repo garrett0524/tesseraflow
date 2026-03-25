@@ -263,3 +263,32 @@ export const syncAllToGoogle = () => fetchApi('/calendar/google/sync-all', { met
 
 // Rescore
 export const rescoreAllLeads = () => fetchApi('/leads/rescore', { method: 'POST' });
+
+// ============================================================
+// Apollo Enrichment
+// ============================================================
+export const enrichLead = (leadId) => fetchApi(`/apollo/enrich/${leadId}`, { method: 'POST' });
+
+export const enrichBulk = (data) => fetchApi('/apollo/enrich-bulk', {
+  method: 'POST',
+  body: JSON.stringify(data),
+});
+
+export const getApolloStatus = () => fetchApi('/apollo/status');
+
+// ============================================================
+// Instantly Campaign Push
+// ============================================================
+export const getInstantlyCampaigns = () => fetchApi('/instantly/campaigns');
+
+export const pushToInstantly = (leadIds, campaignId) => fetchApi('/instantly/push', {
+  method: 'POST',
+  body: JSON.stringify({ leadIds, campaignId }),
+});
+
+export const pushFilteredToInstantly = (filter, campaignId) => fetchApi('/instantly/push-filtered', {
+  method: 'POST',
+  body: JSON.stringify({ filter, campaignId }),
+});
+
+export const syncInstantlyStatuses = () => fetchApi('/instantly/sync', { method: 'POST' });
