@@ -79,17 +79,11 @@ async function pushLeadsToCampaign(leadIds, campaignId) {
         },
         body: JSON.stringify({
           campaign_id: campaignId,
-          skip_if_in_workspace: true,
-          leads: [{
-            email: lead.email,
-            first_name: firstName,
-            last_name: lastName,
-            company_name: lead.business_name || '',
-            variables: {
-              city: lead.city || '',
-              phone: lead.phone || '',
-            },
-          }],
+          email: lead.email,
+          first_name: firstName,
+          last_name: lastName,
+          company_name: lead.business_name || '',
+          lt_interest_status: 0,
         }),
       });
 
