@@ -3,6 +3,7 @@
  *
  * Syncs email statuses from Instantly campaigns back to TesseraFlow leads.
  * Handles both manual sync and webhook-based real-time updates.
+ * API key passed via Authorization header (Bearer token).
  */
 
 const { query } = require('../database/pg');
@@ -32,9 +33,14 @@ async function syncEmailStatuses() {
 
   for (const lead of leads) {
     try {
-      const url = `${INSTANTLY_BASE}/lead/get?api_key=${encodeURIComponent(apiKey)}&campaign_id=${encodeURIComponent(lead.instantly_campaign_id)}&email=${encodeURIComponent(lead.email)}`;
+      const url = `${INSTANTLY_BASE}/lead/get?campaign_id=${encodeURIComponent(lead.instantly_campaign_id)}&email=${encodeURIComponent(lead.email)}`;
 
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+      });
       if (!response.ok) {
         stats.errors++;
         continue;

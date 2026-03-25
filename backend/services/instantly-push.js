@@ -2,6 +2,7 @@
  * Instantly.ai Campaign Push Service
  *
  * Pushes enriched leads into Instantly email campaigns.
+ * API key passed via Authorization header (Bearer token).
  */
 
 const { query } = require('../database/pg');
@@ -23,7 +24,12 @@ async function getApiKey() {
 async function getCampaigns() {
   const apiKey = await getApiKey();
 
-  const response = await fetch(`${INSTANTLY_BASE}/campaign/list?api_key=${encodeURIComponent(apiKey)}`);
+  const response = await fetch(`${INSTANTLY_BASE}/campaign/list`, {
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+  });
   if (!response.ok) {
     const errText = await response.text();
     throw new Error(`Instantly API error (${response.status}): ${errText}`);
@@ -65,9 +71,11 @@ async function pushLeadsToCampaign(leadIds, campaignId) {
     try {
       const response = await fetch(`${INSTANTLY_BASE}/lead/add`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
         body: JSON.stringify({
-          api_key: apiKey,
           campaign_id: campaignId,
           skip_if_in_workspace: true,
           leads: [{
