@@ -3,21 +3,24 @@
  *
  * Enriches leads with contact information (name, email, title, phone)
  * using Apollo's People Search API. Supports single and bulk enrichment.
+ *
+ * Nginx note: if proxying to this backend, add these timeouts to your
+ * location block to avoid gateway timeouts during bulk enrichment:
+ *
+ *   proxy_read_timeout    120s;
+ *   proxy_connect_timeout 120s;
+ *   proxy_send_timeout    120s;
  */
 
 const { query } = require('../database/pg');
 
 const APOLLO_BASE = 'https://api.apollo.io/api/v1';
+const FETCH_TIMEOUT_MS = 30_000; // 30 seconds per API call
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Reads the Apollo API key from the settings table.
- * @returns {Promise<string>} The API key
- * @throws {Error} If the key is not configured
- */
 async function getApiKey() {
   const { rows: [setting] } = await query(
     "SELECT value FROM settings WHERE key = 'apollo_api_key'"
@@ -31,27 +34,172 @@ async function getApiKey() {
   return key;
 }
 
-/**
- * Small utility – pause execution for `ms` milliseconds.
- */
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Wrapper around fetch with a 30-second AbortController timeout.
+ * Throws a clean error message on timeout instead of hanging.
+ */
+async function apolloFetch(url, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    return response;
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new Error('Apollo API request timed out after 30 seconds. Try again later.');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Extract a bare domain from a website URL.
+ * "https://www.joesbar.com/menu" → "joesbar.com"
+ */
+function extractDomain(website) {
+  if (!website) return null;
+  try {
+    let url = website.trim();
+    if (!url.startsWith('http')) url = 'https://' + url;
+    const hostname = new URL(url).hostname;
+    return hostname.replace(/^www\./, '');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extract the best person from an Apollo people array.
+ */
+function pickBestPerson(people) {
+  if (!people || people.length === 0) return null;
+  return people[0];
+}
+
 // ---------------------------------------------------------------------------
-// enrichLead – single lead enrichment
+// Search strategies (each returns an array of people or [])
 // ---------------------------------------------------------------------------
 
 /**
- * Enrich a single lead by querying Apollo's People Search API.
- *
- * @param {number} leadId - The leads.id to enrich
- * @returns {Promise<object>} The enrichment result
+ * Strategy 1: Search by company name + location + title keywords.
+ * Best for businesses with a recognizable brand name in Apollo.
  */
+async function searchByName(apiKey, lead) {
+  const response = await apolloFetch(`${APOLLO_BASE}/mixed_people/api_search`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache',
+      'X-Api-Key': apiKey,
+    },
+    body: JSON.stringify({
+      q_organization_name: lead.business_name,
+      person_locations: [`${lead.city || 'New York'}, New York`],
+      person_titles: ['owner', 'general manager', 'manager', 'proprietor', 'partner'],
+      page: 1,
+      per_page: 5,
+    }),
+  });
+
+  if (!response.ok) return [];
+  const data = await response.json();
+  return data.people || [];
+}
+
+/**
+ * Strategy 2: Search by company domain (extracted from the lead's website).
+ * Drops the title filter to cast a wider net — many small businesses
+ * list contacts without formal titles in Apollo.
+ */
+async function searchByDomain(apiKey, lead) {
+  const domain = extractDomain(lead.website);
+  if (!domain) return [];
+
+  const response = await apolloFetch(`${APOLLO_BASE}/mixed_people/api_search`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache',
+      'X-Api-Key': apiKey,
+    },
+    body: JSON.stringify({
+      q_organization_domains: domain,
+      person_locations: [`${lead.city || 'New York'}, New York`],
+      page: 1,
+      per_page: 5,
+    }),
+  });
+
+  if (!response.ok) return [];
+  const data = await response.json();
+  return data.people || [];
+}
+
+/**
+ * Strategy 3: Use the organization enrichment endpoint to find the company
+ * first, then grab any associated contacts. Works for businesses that have
+ * an Apollo org record but whose people aren't indexed by name search.
+ */
+async function searchByOrgEnrichment(apiKey, lead) {
+  const domain = extractDomain(lead.website);
+
+  // Try org enrichment by domain first, fall back to name
+  const orgBody = domain
+    ? { domain }
+    : { name: lead.business_name };
+
+  const orgResponse = await apolloFetch(`${APOLLO_BASE}/organizations/enrich`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache',
+      'X-Api-Key': apiKey,
+    },
+    body: JSON.stringify(orgBody),
+  });
+
+  if (!orgResponse.ok) return [];
+  const orgData = await orgResponse.json();
+  const org = orgData.organization;
+  if (!org || !org.id) return [];
+
+  // Now search for people at this org ID
+  const peopleResponse = await apolloFetch(`${APOLLO_BASE}/mixed_people/api_search`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache',
+      'X-Api-Key': apiKey,
+    },
+    body: JSON.stringify({
+      organization_ids: [org.id],
+      page: 1,
+      per_page: 5,
+    }),
+  });
+
+  if (!peopleResponse.ok) return [];
+  const peopleData = await peopleResponse.json();
+  return peopleData.people || [];
+}
+
+// ---------------------------------------------------------------------------
+// enrichLead – single lead enrichment with fallback strategies
+// ---------------------------------------------------------------------------
+
 async function enrichLead(leadId) {
   const apiKey = await getApiKey();
 
-  // 1. Read the lead from the database
   const { rows: [lead] } = await query(
     'SELECT id, business_name, city, address, website FROM leads WHERE id = $1',
     [leadId]
@@ -61,49 +209,23 @@ async function enrichLead(leadId) {
     throw new Error(`Lead with id ${leadId} not found.`);
   }
 
-  // 2. Call Apollo People Search API (key in header per Apollo docs)
-  const searchBody = {
-    q_organization_name: lead.business_name,
-    person_locations: [
-      `${lead.city || 'New York'}, New York`,
-    ],
-    person_titles: [
-      'owner',
-      'general manager',
-      'manager',
-      'proprietor',
-      'partner',
-    ],
-    page: 1,
-    per_page: 5,
-  };
-
-  const response = await fetch(`${APOLLO_BASE}/mixed_people/api_search`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Cache-Control': 'no-cache',
-      'X-Api-Key': apiKey,
-    },
-    body: JSON.stringify(searchBody),
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(
-      `Apollo API error (${response.status}): ${errorBody}`
-    );
-  }
-
-  const data = await response.json();
-  const people = data.people || [];
+  // Try strategies in order: name search → domain search → org enrichment
+  let people = await searchByName(apiKey, lead);
 
   if (people.length === 0) {
+    people = await searchByDomain(apiKey, lead);
+  }
+
+  if (people.length === 0) {
+    people = await searchByOrgEnrichment(apiKey, lead);
+  }
+
+  const person = pickBestPerson(people);
+
+  if (!person) {
     return { found: false, leadId };
   }
 
-  // 3. Take the best match (first result)
-  const person = people[0];
   const contactName = [person.first_name, person.last_name]
     .filter(Boolean)
     .join(' ');
@@ -112,7 +234,6 @@ async function enrichLead(leadId) {
   const contactPhone = person.direct_phone || person.mobile_phone || null;
   const apolloId = person.id || null;
 
-  // 4. Update the lead in the database
   const { rows: [updated] } = await query(
     `UPDATE leads
         SET email       = COALESCE($1, email),
@@ -143,20 +264,9 @@ async function enrichLead(leadId) {
 // enrichBulk – batch enrichment with rate-limit pacing
 // ---------------------------------------------------------------------------
 
-/**
- * Enrich multiple leads in batches of 10 with a 1-second delay between
- * batches to stay within Apollo rate limits.
- *
- * @param {object}   options
- * @param {number[]} [options.leadIds]  - Explicit list of lead IDs to enrich
- * @param {string}   [options.filter]   - Preset filter: "no_email" | "high_score"
- * @returns {Promise<object>} Summary counts
- */
 async function enrichBulk({ leadIds, filter } = {}) {
-  // Ensure the API key is valid before we start a long batch
   await getApiKey();
 
-  // 1. Determine which leads to process
   let leads;
 
   if (leadIds && leadIds.length > 0) {
@@ -181,12 +291,10 @@ async function enrichBulk({ leadIds, filter } = {}) {
     );
   }
 
-  // 2. Process in batches of 10
   const BATCH_SIZE = 10;
   const stats = { enriched: 0, not_found: 0, already_had_email: 0, errors: 0 };
 
   for (let i = 0; i < leads.length; i += BATCH_SIZE) {
-    // Pause between batches (skip pause before the first batch)
     if (i > 0) {
       await sleep(1000);
     }
@@ -194,7 +302,6 @@ async function enrichBulk({ leadIds, filter } = {}) {
     const batch = leads.slice(i, i + BATCH_SIZE);
 
     for (const lead of batch) {
-      // Skip leads that already have an email (relevant when leadIds are explicit)
       if (lead.email && lead.email.trim() !== '') {
         stats.already_had_email++;
         continue;
@@ -221,11 +328,6 @@ async function enrichBulk({ leadIds, filter } = {}) {
 // checkStatus – validate Apollo API key
 // ---------------------------------------------------------------------------
 
-/**
- * Validates the stored Apollo API key by making a lightweight search request.
- *
- * @returns {Promise<{valid: boolean, message: string}>}
- */
 async function checkStatus() {
   let apiKey;
   try {
@@ -235,7 +337,7 @@ async function checkStatus() {
   }
 
   try {
-    const response = await fetch(`${APOLLO_BASE}/mixed_people/api_search`, {
+    const response = await apolloFetch(`${APOLLO_BASE}/mixed_people/api_search`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
