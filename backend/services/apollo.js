@@ -16,6 +16,10 @@ const { query } = require('../database/pg');
 
 const APOLLO_BASE = 'https://api.apollo.io/api/v1';
 const FETCH_TIMEOUT_MS = 30_000; // 30 seconds per API call
+const BATCH_SIZE = 5;            // leads per batch (reduced for rate limits)
+const BATCH_DELAY_MS = 3_000;    // 3 seconds between batches
+const RATE_LIMIT_WAIT_MS = 60_000; // 60 seconds on 429
+const MAX_RETRIES = 2;
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -63,6 +67,26 @@ async function apolloFetch(url, options = {}) {
 }
 
 /**
+ * apolloFetch with automatic 429 retry. Waits 60s then retries up to MAX_RETRIES times.
+ */
+async function apolloFetchWithRetry(url, options = {}) {
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const response = await apolloFetch(url, options);
+
+    if (response.status === 429) {
+      if (attempt < MAX_RETRIES) {
+        console.warn(`[Apollo] Rate limited (429). Waiting ${RATE_LIMIT_WAIT_MS / 1000}s before retry ${attempt + 1}/${MAX_RETRIES}...`);
+        await sleep(RATE_LIMIT_WAIT_MS);
+        continue;
+      }
+      console.error('[Apollo] Rate limited (429) after all retries.');
+    }
+
+    return response;
+  }
+}
+
+/**
  * Extract a bare domain from a website URL.
  * "https://www.joesbar.com/menu" → "joesbar.com"
  */
@@ -90,12 +114,8 @@ function pickBestPerson(people) {
 // Search strategies (each returns an array of people or [])
 // ---------------------------------------------------------------------------
 
-/**
- * Strategy 1: Search by company name + location + title keywords.
- * Best for businesses with a recognizable brand name in Apollo.
- */
 async function searchByName(apiKey, lead) {
-  const response = await apolloFetch(`${APOLLO_BASE}/mixed_people/api_search`, {
+  const response = await apolloFetchWithRetry(`${APOLLO_BASE}/mixed_people/api_search`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -116,16 +136,11 @@ async function searchByName(apiKey, lead) {
   return data.people || [];
 }
 
-/**
- * Strategy 2: Search by company domain (extracted from the lead's website).
- * Drops the title filter to cast a wider net — many small businesses
- * list contacts without formal titles in Apollo.
- */
 async function searchByDomain(apiKey, lead) {
   const domain = extractDomain(lead.website);
   if (!domain) return [];
 
-  const response = await apolloFetch(`${APOLLO_BASE}/mixed_people/api_search`, {
+  const response = await apolloFetchWithRetry(`${APOLLO_BASE}/mixed_people/api_search`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -145,20 +160,13 @@ async function searchByDomain(apiKey, lead) {
   return data.people || [];
 }
 
-/**
- * Strategy 3: Use the organization enrichment endpoint to find the company
- * first, then grab any associated contacts. Works for businesses that have
- * an Apollo org record but whose people aren't indexed by name search.
- */
 async function searchByOrgEnrichment(apiKey, lead) {
   const domain = extractDomain(lead.website);
-
-  // Try org enrichment by domain first, fall back to name
   const orgBody = domain
     ? { domain }
     : { name: lead.business_name };
 
-  const orgResponse = await apolloFetch(`${APOLLO_BASE}/organizations/enrich`, {
+  const orgResponse = await apolloFetchWithRetry(`${APOLLO_BASE}/organizations/enrich`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -173,8 +181,7 @@ async function searchByOrgEnrichment(apiKey, lead) {
   const org = orgData.organization;
   if (!org || !org.id) return [];
 
-  // Now search for people at this org ID
-  const peopleResponse = await apolloFetch(`${APOLLO_BASE}/mixed_people/api_search`, {
+  const peopleResponse = await apolloFetchWithRetry(`${APOLLO_BASE}/mixed_people/api_search`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -198,19 +205,16 @@ async function searchByOrgEnrichment(apiKey, lead) {
 // ---------------------------------------------------------------------------
 
 /**
- * Calls Apollo People Enrichment to reveal a contact's email and phone.
- * Costs 1 Apollo credit per call. Only call when a search returned a
- * person record but the email field was null/empty.
- *
- * @param {string} apiKey
- * @param {object} person - The person object from a search result (must have .id)
- * @returns {Promise<object>} The enriched person, or the original if reveal fails
+ * Tries people/match first (with api_key in body AND header).
+ * If that fails (400), falls back to people/enrich.
+ * Costs 1 Apollo credit per successful call.
  */
 async function revealPerson(apiKey, person) {
   if (!person || !person.id) return person;
 
+  // Attempt 1: POST /people/match (api_key in both header and body)
   try {
-    const response = await apolloFetch(`${APOLLO_BASE}/people/match`, {
+    const response = await apolloFetchWithRetry(`${APOLLO_BASE}/people/match`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -218,32 +222,70 @@ async function revealPerson(apiKey, person) {
         'X-Api-Key': apiKey,
       },
       body: JSON.stringify({
+        api_key: apiKey,
         id: person.id,
         reveal_personal_emails: true,
         reveal_phone_number: true,
       }),
     });
 
-    if (!response.ok) {
-      console.warn(`Apollo reveal failed for person ${person.id}: ${response.status}`);
-      return person;
+    if (response.ok) {
+      const data = await response.json();
+      const revealed = data.person || data;
+      console.log(`[Apollo] Reveal via people/match succeeded for person ${person.id}: email=${revealed.email || 'none'}`);
+      return {
+        ...person,
+        email: revealed.email || person.email || null,
+        direct_phone: revealed.direct_phone || person.direct_phone || null,
+        mobile_phone: revealed.mobile_phone || person.mobile_phone || null,
+        personal_emails: revealed.personal_emails || person.personal_emails || [],
+      };
     }
 
-    const data = await response.json();
-    const revealed = data.person || data;
-
-    // Merge revealed fields back onto the original person object
-    return {
-      ...person,
-      email: revealed.email || person.email || null,
-      direct_phone: revealed.direct_phone || person.direct_phone || null,
-      mobile_phone: revealed.mobile_phone || person.mobile_phone || null,
-      personal_emails: revealed.personal_emails || person.personal_emails || [],
-    };
+    // Log detailed error for debugging
+    const errBody = await response.text();
+    console.error(`[Apollo] people/match failed for person ${person.id} (${response.status}): ${errBody}`);
   } catch (err) {
-    console.warn(`Apollo reveal error for person ${person.id}:`, err.message);
-    return person;
+    console.error(`[Apollo] people/match error for person ${person.id}:`, err.message);
   }
+
+  // Attempt 2: Fallback to POST /people/enrich
+  try {
+    console.log(`[Apollo] Trying fallback people/enrich for person ${person.id}...`);
+    const response = await apolloFetchWithRetry(`${APOLLO_BASE}/people/enrich`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+        'X-Api-Key': apiKey,
+      },
+      body: JSON.stringify({
+        api_key: apiKey,
+        id: person.id,
+      }),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      const revealed = data.person || data;
+      console.log(`[Apollo] Reveal via people/enrich succeeded for person ${person.id}: email=${revealed.email || 'none'}`);
+      return {
+        ...person,
+        email: revealed.email || person.email || null,
+        direct_phone: revealed.direct_phone || person.direct_phone || null,
+        mobile_phone: revealed.mobile_phone || person.mobile_phone || null,
+        personal_emails: revealed.personal_emails || person.personal_emails || [],
+      };
+    }
+
+    const errBody = await response.text();
+    console.error(`[Apollo] people/enrich also failed for person ${person.id} (${response.status}): ${errBody}`);
+  } catch (err) {
+    console.error(`[Apollo] people/enrich error for person ${person.id}:`, err.message);
+  }
+
+  // Both failed — return original person unchanged
+  return person;
 }
 
 // ---------------------------------------------------------------------------
@@ -267,6 +309,8 @@ async function enrichLead(leadId, { skipReveal = false } = {}) {
     throw new Error(`Lead with id ${leadId} not found.`);
   }
 
+  console.log(`[Apollo] Enriching lead ${leadId}: "${lead.business_name}" (${lead.city || 'no city'})`);
+
   // Try strategies in order: name search → domain search → org enrichment
   let people = await searchByName(apiKey, lead);
 
@@ -281,8 +325,11 @@ async function enrichLead(leadId, { skipReveal = false } = {}) {
   let person = pickBestPerson(people);
 
   if (!person) {
+    console.log(`[Apollo] No person found for lead ${leadId}`);
     return { found: false, leadId, credits_used: 0 };
   }
+
+  console.log(`[Apollo] Found person for lead ${leadId}: ${person.first_name} ${person.last_name}, email=${person.email || 'NONE'}, title=${person.title || 'none'}`);
 
   // If search found a person but no email, reveal it (costs 1 credit)
   let creditsUsed = 0;
@@ -295,8 +342,7 @@ async function enrichLead(leadId, { skipReveal = false } = {}) {
 
   const contactName = [person.first_name, person.last_name]
     .filter(Boolean)
-    .join(' ');
-  // Prefer the business email; fall back to first personal email if available
+    .join(' ') || null;
   const contactEmail = person.email
     || (person.personal_emails && person.personal_emails[0])
     || null;
@@ -304,9 +350,12 @@ async function enrichLead(leadId, { skipReveal = false } = {}) {
   const contactPhone = person.direct_phone || person.mobile_phone || null;
   const apolloId = person.id || null;
 
-  const { rows: [updated] } = await query(
+  // Log exactly what we're about to write to the DB
+  console.log(`[Apollo] Saving to DB for lead ${leadId}: email=${contactEmail}, contact_name=${contactName}, contact_title=${contactTitle}, direct_phone=${contactPhone}, apollo_id=${apolloId}`);
+
+  const updateResult = await query(
     `UPDATE leads
-        SET email       = COALESCE($1, email),
+        SET email         = COALESCE($1, email),
             contact_name  = COALESCE($2, contact_name),
             contact_title = COALESCE($3, contact_title),
             direct_phone  = COALESCE($4, direct_phone),
@@ -318,6 +367,15 @@ async function enrichLead(leadId, { skipReveal = false } = {}) {
     [contactEmail, contactName, contactTitle, contactPhone, apolloId, leadId]
   );
 
+  const updated = updateResult.rows[0];
+
+  if (!updated) {
+    console.error(`[Apollo] UPDATE returned no rows for lead ${leadId}! The lead may have been deleted.`);
+    return { found: true, leadId, credits_used: creditsUsed, db_saved: false };
+  }
+
+  console.log(`[Apollo] DB updated for lead ${leadId}: email=${updated.email}, contact_name=${updated.contact_name}, contact_title=${updated.contact_title}, rowCount=${updateResult.rowCount}`);
+
   return {
     found: true,
     leadId,
@@ -327,6 +385,7 @@ async function enrichLead(leadId, { skipReveal = false } = {}) {
     direct_phone: contactPhone,
     apollo_id: apolloId,
     credits_used: creditsUsed,
+    db_saved: true,
     lead: updated,
   };
 }
@@ -339,9 +398,7 @@ async function enrichLead(leadId, { skipReveal = false } = {}) {
  * @param {object}   options
  * @param {number[]} [options.leadIds]    - Explicit list of lead IDs to enrich
  * @param {string}   [options.filter]     - "no_email" | "high_score"
- * @param {boolean}  [options.dryRun=false] - If true, return a preview of how
- *   many leads would be processed and max credits that could be spent, without
- *   actually calling Apollo.
+ * @param {boolean}  [options.dryRun=false] - If true, return a preview only
  */
 async function enrichBulk({ leadIds, filter, dryRun = false } = {}) {
   await getApiKey();
@@ -380,19 +437,18 @@ async function enrichBulk({ leadIds, filter, dryRun = false } = {}) {
       total_leads: leads.length,
       needs_enrichment: needsEnrichment.length,
       already_had_email: alreadyHadEmail,
-      max_credits: needsEnrichment.length, // worst case: 1 reveal per lead
+      max_credits: needsEnrichment.length,
       message: `Will attempt to enrich ${needsEnrichment.length} leads. Up to ${needsEnrichment.length} Apollo credits may be used for email reveals.`,
     };
   }
 
-  console.log(`[Apollo] Bulk enrichment starting: ${needsEnrichment.length} leads to process (max ${needsEnrichment.length} credits)`);
+  console.log(`[Apollo] Bulk enrichment starting: ${needsEnrichment.length} leads to process (batch size ${BATCH_SIZE}, ${BATCH_DELAY_MS / 1000}s delay)`);
 
-  const BATCH_SIZE = 10;
   const stats = { enriched: 0, not_found: 0, already_had_email: alreadyHadEmail, errors: 0, credits_used: 0 };
 
   for (let i = 0; i < needsEnrichment.length; i += BATCH_SIZE) {
     if (i > 0) {
-      await sleep(1000);
+      await sleep(BATCH_DELAY_MS);
     }
 
     const batch = needsEnrichment.slice(i, i + BATCH_SIZE);
@@ -407,7 +463,7 @@ async function enrichBulk({ leadIds, filter, dryRun = false } = {}) {
           stats.not_found++;
         }
       } catch (err) {
-        console.error(`Apollo enrichBulk error for lead ${lead.id}:`, err.message);
+        console.error(`[Apollo] Bulk error for lead ${lead.id}:`, err.message);
         stats.errors++;
       }
     }
@@ -415,7 +471,7 @@ async function enrichBulk({ leadIds, filter, dryRun = false } = {}) {
     console.log(`[Apollo] Bulk progress: ${Math.min(i + BATCH_SIZE, needsEnrichment.length)}/${needsEnrichment.length} processed, ${stats.credits_used} credits used so far`);
   }
 
-  console.log(`[Apollo] Bulk enrichment complete: ${stats.enriched} enriched, ${stats.credits_used} credits used`);
+  console.log(`[Apollo] Bulk enrichment complete: ${stats.enriched} enriched, ${stats.not_found} not found, ${stats.errors} errors, ${stats.credits_used} credits used`);
 
   return stats;
 }
