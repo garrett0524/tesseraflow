@@ -71,7 +71,7 @@ async function pushLeadsToCampaign(leadIds, campaignId) {
     const lastName = nameParts.slice(1).join(' ') || '';
 
     try {
-      const response = await fetch(`${INSTANTLY_BASE}/leads`, {
+      const response = await fetch('https://api.instantly.ai/api/v1/lead/add', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -79,11 +79,13 @@ async function pushLeadsToCampaign(leadIds, campaignId) {
         },
         body: JSON.stringify({
           campaign_id: campaignId,
-          email: lead.email,
-          first_name: firstName,
-          last_name: lastName,
-          company_name: lead.business_name || '',
-          lt_interest_status: 0,
+          skip_if_in_workspace: false,
+          leads: [{
+            email: lead.email,
+            first_name: firstName,
+            last_name: lastName,
+            company_name: lead.business_name || '',
+          }],
         }),
       });
 
