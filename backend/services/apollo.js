@@ -61,9 +61,8 @@ async function enrichLead(leadId) {
     throw new Error(`Lead with id ${leadId} not found.`);
   }
 
-  // 2. Call Apollo People Search API
+  // 2. Call Apollo People Search API (key in header per Apollo docs)
   const searchBody = {
-    api_key: apiKey,
     q_organization_name: lead.business_name,
     person_locations: [
       `${lead.city || 'New York'}, New York`,
@@ -81,7 +80,11 @@ async function enrichLead(leadId) {
 
   const response = await fetch(`${APOLLO_BASE}/mixed_people/search`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache',
+      'X-Api-Key': apiKey,
+    },
     body: JSON.stringify(searchBody),
   });
 
@@ -234,9 +237,12 @@ async function checkStatus() {
   try {
     const response = await fetch(`${APOLLO_BASE}/mixed_people/search`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+        'X-Api-Key': apiKey,
+      },
       body: JSON.stringify({
-        api_key: apiKey,
         q_organization_name: 'Apollo.io',
         page: 1,
         per_page: 1,
