@@ -4,7 +4,7 @@ import KanbanBoard from '../components/Pipeline/KanbanBoard'
 import LeadTable from '../components/Pipeline/LeadTable'
 import LeadDetailModal from '../components/Shared/LeadDetailModal'
 import TodayScheduleWidget from '../components/Calendar/TodayScheduleWidget'
-import { getLeads, updateLead, createLead, enrichBulk, getInstantlyCampaigns, pushFilteredToInstantly } from '../api'
+import { getLeads, updateLead, createLead, enrichBulk, getEnrichBulkStatus, getInstantlyCampaigns, pushFilteredToInstantly } from '../api'
 
 export default function PipelinePage() {
   const [leads, setLeads] = useState([]);
@@ -55,22 +55,52 @@ export default function PipelinePage() {
     }
   };
 
+  const enrichPollRef = useRef(null);
+
   const handleEnrichConfirmed = async () => {
-    const { filter } = enrichConfirm;
+    const { filter, preview } = enrichConfirm;
+    const total = preview.needs_enrichment;
     setEnrichConfirm(null);
-    setBulkProgress({ title: 'Enriching Leads', message: 'Starting enrichment...', done: false });
+    setBulkProgress({ title: 'Enriching Leads', message: `Starting enrichment of ${total} leads...`, done: false, total, completed: 0 });
     try {
-      const result = await enrichBulk({ filter });
-      setBulkProgress({
-        title: 'Enrichment Complete',
-        message: `Enriched: ${result.enriched || 0}, Not found: ${result.not_found || 0}, Already had email: ${result.already_had_email || 0}, Credits used: ${result.credits_used || 0}`,
-        done: true,
-      });
-      fetchLeads();
+      await enrichBulk({ filter });
+      // Start polling for progress
+      enrichPollRef.current = setInterval(async () => {
+        try {
+          const status = await getEnrichBulkStatus();
+          if (status.done) {
+            clearInterval(enrichPollRef.current);
+            enrichPollRef.current = null;
+            setBulkProgress({
+              title: 'Enrichment Complete',
+              message: `Enriched: ${status.enriched || 0}, Not found: ${status.not_found || 0}, Already had email: ${status.already_had_email || 0}, Credits used: ${status.credits_used || 0}, Errors: ${status.errors || 0}`,
+              done: true,
+            });
+            fetchLeads();
+          } else {
+            setBulkProgress({
+              title: 'Enriching Leads',
+              message: `${status.completed || 0} / ${status.total || total} leads processed — ${status.enriched || 0} enriched, ${status.credits_used || 0} credits used`,
+              done: false,
+              total: status.total || total,
+              completed: status.completed || 0,
+            });
+          }
+        } catch {
+          // Polling error — keep trying
+        }
+      }, 3000);
     } catch (err) {
       setBulkProgress({ title: 'Enrichment Failed', message: err.message, done: true });
     }
   };
+
+  // Cleanup poll on unmount
+  useEffect(() => {
+    return () => {
+      if (enrichPollRef.current) clearInterval(enrichPollRef.current);
+    };
+  }, []);
 
   const handleOpenPush = async (filter) => {
     setShowPushMenu(false);
@@ -252,8 +282,13 @@ export default function PipelinePage() {
             <h3 style={{ marginBottom: 'var(--space-md)' }}>{bulkProgress.title}</h3>
             <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginBottom: 'var(--space-lg)' }}>{bulkProgress.message}</p>
             {!bulkProgress.done && (
-              <div style={{ width: '100%', height: '4px', borderRadius: '2px', background: 'var(--bg-tertiary)', overflow: 'hidden' }}>
-                <div style={{ width: '60%', height: '100%', background: 'var(--accent-primary)', borderRadius: '2px', animation: 'pulse 1.5s ease-in-out infinite' }} />
+              <div style={{ width: '100%', height: '6px', borderRadius: '3px', background: 'var(--bg-tertiary)', overflow: 'hidden' }}>
+                <div style={{
+                  width: bulkProgress.total ? `${Math.round((bulkProgress.completed || 0) / bulkProgress.total * 100)}%` : '30%',
+                  height: '100%', background: 'var(--accent-primary)', borderRadius: '3px',
+                  transition: 'width 0.5s ease',
+                  ...(bulkProgress.total ? {} : { animation: 'pulse 1.5s ease-in-out infinite' }),
+                }} />
               </div>
             )}
             {bulkProgress.done && (

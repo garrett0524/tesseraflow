@@ -274,6 +274,8 @@ export const enrichBulk = (data) => fetchApi('/apollo/enrich-bulk', {
   body: JSON.stringify(data),
 });
 
+export const getEnrichBulkStatus = () => fetchApi('/apollo/enrich-bulk/status');
+
 export const getApolloStatus = () => fetchApi('/apollo/status');
 
 // ============================================================

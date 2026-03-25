@@ -398,8 +398,9 @@ async function enrichLead(leadId, { skipReveal = false } = {}) {
  * @param {number[]} [options.leadIds]    - Explicit list of lead IDs to enrich
  * @param {string}   [options.filter]     - "no_email" | "high_score"
  * @param {boolean}  [options.dryRun=false] - If true, return a preview only
+ * @param {function} [options.onProgress] - Called after each lead with current stats
  */
-async function enrichBulk({ leadIds, filter, dryRun = false } = {}) {
+async function enrichBulk({ leadIds, filter, dryRun = false, onProgress } = {}) {
   await getApiKey();
 
   let leads;
@@ -443,7 +444,7 @@ async function enrichBulk({ leadIds, filter, dryRun = false } = {}) {
 
   console.log(`[Apollo] Bulk enrichment starting: ${needsEnrichment.length} leads to process (batch size ${BATCH_SIZE}, ${BATCH_DELAY_MS / 1000}s delay)`);
 
-  const stats = { enriched: 0, not_found: 0, already_had_email: alreadyHadEmail, errors: 0, credits_used: 0 };
+  const stats = { completed: 0, enriched: 0, not_found: 0, already_had_email: alreadyHadEmail, errors: 0, credits_used: 0 };
 
   for (let i = 0; i < needsEnrichment.length; i += BATCH_SIZE) {
     if (i > 0) {
@@ -465,9 +466,12 @@ async function enrichBulk({ leadIds, filter, dryRun = false } = {}) {
         console.error(`[Apollo] Bulk error for lead ${lead.id}:`, err.message);
         stats.errors++;
       }
+
+      stats.completed++;
+      if (onProgress) onProgress(stats);
     }
 
-    console.log(`[Apollo] Bulk progress: ${Math.min(i + BATCH_SIZE, needsEnrichment.length)}/${needsEnrichment.length} processed, ${stats.credits_used} credits used so far`);
+    console.log(`[Apollo] Bulk progress: ${stats.completed}/${needsEnrichment.length} processed, ${stats.credits_used} credits used so far`);
   }
 
   console.log(`[Apollo] Bulk enrichment complete: ${stats.enriched} enriched, ${stats.not_found} not found, ${stats.errors} errors, ${stats.credits_used} credits used`);
