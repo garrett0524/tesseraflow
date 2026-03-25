@@ -130,6 +130,12 @@ export default function LeadDetailModal({ lead: initialLead, onClose, onSave }) 
     setPushing(true);
     setPushMsg(null);
     try {
+      // Save any unsaved email/contact changes to DB first so the push reads fresh data
+      await onSave(lead.id, {
+        business_name: businessName, category, address, city, state, zip,
+        phone, website, owner_name: ownerName, pipeline_stage: stage, notes,
+        email, contact_name: contactName, contact_title: contactTitle, direct_phone: directPhone,
+      });
       const res = await pushToInstantly([lead.id], selectedCampaign);
       if (res.pushed > 0) {
         setPushMsg({ type: 'success', text: 'Lead pushed to campaign!' });
@@ -590,7 +596,7 @@ export default function LeadDetailModal({ lead: initialLead, onClose, onSave }) 
               )}
 
               {/* Add to Campaign button */}
-              {(email || lead.email) && !lead.instantly_campaign_id && !showCampaignPush && (
+              {email && !lead.instantly_campaign_id && !showCampaignPush && (
                 <button
                   className="btn btn-sm"
                   onClick={handleOpenCampaignPush}
@@ -605,6 +611,11 @@ export default function LeadDetailModal({ lead: initialLead, onClose, onSave }) 
                 >
                   Add to Campaign
                 </button>
+              )}
+              {!email && !lead.email && !showCampaignPush && (
+                <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: 'var(--space-sm)' }}>
+                  Add an email to push to a campaign
+                </div>
               )}
               {lead.instantly_campaign_id && (
                 <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: 'var(--space-sm)' }}>
