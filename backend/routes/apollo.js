@@ -23,10 +23,11 @@ router.post('/enrich/:leadId', async (req, res) => {
 });
 
 // POST /api/apollo/enrich-bulk
+// Pass dryRun: true in body to preview credit usage without calling Apollo
 router.post('/enrich-bulk', async (req, res) => {
   try {
-    const { leadIds, filter } = req.body;
-    const result = await enrichBulk({ leadIds, filter });
+    const { leadIds, filter, dryRun } = req.body;
+    const result = await enrichBulk({ leadIds, filter, dryRun: !!dryRun });
     res.json(result);
   } catch (err) {
     const status = err.message.includes('not configured') ? 400 : 500;

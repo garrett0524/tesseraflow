@@ -35,14 +35,35 @@ export default function PipelinePage() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  // Enrichment confirmation state
+  const [enrichConfirm, setEnrichConfirm] = useState(null); // { filter, preview }
+
   const handleBulkEnrich = async (filter) => {
     setShowEnrichMenu(false);
+    setBulkProgress({ title: 'Checking Leads', message: 'Calculating credit usage...', done: false });
+    try {
+      // Dry run first to show credit estimate
+      const preview = await enrichBulk({ filter, dryRun: true });
+      setBulkProgress(null);
+      if (preview.needs_enrichment === 0) {
+        setBulkProgress({ title: 'Nothing to Enrich', message: `All ${preview.already_had_email} leads already have email addresses.`, done: true });
+        return;
+      }
+      setEnrichConfirm({ filter, preview });
+    } catch (err) {
+      setBulkProgress({ title: 'Enrichment Failed', message: err.message, done: true });
+    }
+  };
+
+  const handleEnrichConfirmed = async () => {
+    const { filter } = enrichConfirm;
+    setEnrichConfirm(null);
     setBulkProgress({ title: 'Enriching Leads', message: 'Starting enrichment...', done: false });
     try {
       const result = await enrichBulk({ filter });
       setBulkProgress({
         title: 'Enrichment Complete',
-        message: `Enriched: ${result.enriched || 0}, Not found: ${result.not_found || 0}, Already had email: ${result.already_had_email || 0}`,
+        message: `Enriched: ${result.enriched || 0}, Not found: ${result.not_found || 0}, Already had email: ${result.already_had_email || 0}, Credits used: ${result.credits_used || 0}`,
         done: true,
       });
       fetchLeads();
@@ -261,6 +282,40 @@ export default function PipelinePage() {
             <div style={{ display: 'flex', gap: 'var(--space-sm)', justifyContent: 'flex-end' }}>
               <button className="btn btn-secondary" onClick={() => setShowCampaignSelect(false)}>Cancel</button>
               <button className="btn btn-primary" onClick={handlePushConfirm} disabled={!selectedCampaign}>Push Leads</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Enrichment credit confirmation modal */}
+      {enrichConfirm && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }} onClick={() => setEnrichConfirm(null)}>
+          <div className="card" style={{ maxWidth: '460px', width: '100%', padding: 'var(--space-2xl)' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ marginBottom: 'var(--space-md)' }}>Confirm Enrichment</h3>
+            <div style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: 'var(--space-lg)', lineHeight: 1.6 }}>
+              <div style={{ marginBottom: 'var(--space-sm)' }}>
+                <strong>{enrichConfirm.preview.needs_enrichment}</strong> leads need enrichment
+              </div>
+              <div style={{ marginBottom: 'var(--space-sm)' }}>
+                {enrichConfirm.preview.already_had_email > 0 && `${enrichConfirm.preview.already_had_email} already have email (skipped)`}
+              </div>
+              <div style={{
+                padding: 'var(--space-md)',
+                background: 'rgba(234,179,8,0.1)',
+                border: '1px solid rgba(234,179,8,0.2)',
+                borderRadius: 'var(--radius-md)',
+                color: '#eab308',
+                fontSize: '13px',
+              }}>
+                Up to <strong>{enrichConfirm.preview.max_credits}</strong> Apollo credits may be used for email reveals (1 credit per contact without a public email).
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 'var(--space-sm)', justifyContent: 'flex-end' }}>
+              <button className="btn btn-secondary" onClick={() => setEnrichConfirm(null)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleEnrichConfirmed}>Enrich {enrichConfirm.preview.needs_enrichment} Leads</button>
             </div>
           </div>
         </div>

@@ -194,10 +194,68 @@ async function searchByOrgEnrichment(apiKey, lead) {
 }
 
 // ---------------------------------------------------------------------------
-// enrichLead – single lead enrichment with fallback strategies
+// revealPerson – spend 1 credit to reveal email/phone for a known person
 // ---------------------------------------------------------------------------
 
-async function enrichLead(leadId) {
+/**
+ * Calls Apollo People Enrichment to reveal a contact's email and phone.
+ * Costs 1 Apollo credit per call. Only call when a search returned a
+ * person record but the email field was null/empty.
+ *
+ * @param {string} apiKey
+ * @param {object} person - The person object from a search result (must have .id)
+ * @returns {Promise<object>} The enriched person, or the original if reveal fails
+ */
+async function revealPerson(apiKey, person) {
+  if (!person || !person.id) return person;
+
+  try {
+    const response = await apolloFetch(`${APOLLO_BASE}/people/match`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+        'X-Api-Key': apiKey,
+      },
+      body: JSON.stringify({
+        id: person.id,
+        reveal_personal_emails: true,
+        reveal_phone_number: true,
+      }),
+    });
+
+    if (!response.ok) {
+      console.warn(`Apollo reveal failed for person ${person.id}: ${response.status}`);
+      return person;
+    }
+
+    const data = await response.json();
+    const revealed = data.person || data;
+
+    // Merge revealed fields back onto the original person object
+    return {
+      ...person,
+      email: revealed.email || person.email || null,
+      direct_phone: revealed.direct_phone || person.direct_phone || null,
+      mobile_phone: revealed.mobile_phone || person.mobile_phone || null,
+      personal_emails: revealed.personal_emails || person.personal_emails || [],
+    };
+  } catch (err) {
+    console.warn(`Apollo reveal error for person ${person.id}:`, err.message);
+    return person;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// enrichLead – single lead enrichment with fallback strategies + reveal
+// ---------------------------------------------------------------------------
+
+/**
+ * @param {number} leadId
+ * @param {object} [options]
+ * @param {boolean} [options.skipReveal=false] - If true, skip the paid reveal step
+ */
+async function enrichLead(leadId, { skipReveal = false } = {}) {
   const apiKey = await getApiKey();
 
   const { rows: [lead] } = await query(
@@ -220,16 +278,28 @@ async function enrichLead(leadId) {
     people = await searchByOrgEnrichment(apiKey, lead);
   }
 
-  const person = pickBestPerson(people);
+  let person = pickBestPerson(people);
 
   if (!person) {
-    return { found: false, leadId };
+    return { found: false, leadId, credits_used: 0 };
+  }
+
+  // If search found a person but no email, reveal it (costs 1 credit)
+  let creditsUsed = 0;
+  const hasEmail = person.email && person.email.trim() !== '';
+
+  if (!hasEmail && !skipReveal) {
+    person = await revealPerson(apiKey, person);
+    creditsUsed = 1;
   }
 
   const contactName = [person.first_name, person.last_name]
     .filter(Boolean)
     .join(' ');
-  const contactEmail = person.email || null;
+  // Prefer the business email; fall back to first personal email if available
+  const contactEmail = person.email
+    || (person.personal_emails && person.personal_emails[0])
+    || null;
   const contactTitle = person.title || null;
   const contactPhone = person.direct_phone || person.mobile_phone || null;
   const apolloId = person.id || null;
@@ -256,6 +326,7 @@ async function enrichLead(leadId) {
     contact_title: contactTitle,
     direct_phone: contactPhone,
     apollo_id: apolloId,
+    credits_used: creditsUsed,
     lead: updated,
   };
 }
@@ -264,7 +335,15 @@ async function enrichLead(leadId) {
 // enrichBulk – batch enrichment with rate-limit pacing
 // ---------------------------------------------------------------------------
 
-async function enrichBulk({ leadIds, filter } = {}) {
+/**
+ * @param {object}   options
+ * @param {number[]} [options.leadIds]    - Explicit list of lead IDs to enrich
+ * @param {string}   [options.filter]     - "no_email" | "high_score"
+ * @param {boolean}  [options.dryRun=false] - If true, return a preview of how
+ *   many leads would be processed and max credits that could be spent, without
+ *   actually calling Apollo.
+ */
+async function enrichBulk({ leadIds, filter, dryRun = false } = {}) {
   await getApiKey();
 
   let leads;
@@ -291,26 +370,39 @@ async function enrichBulk({ leadIds, filter } = {}) {
     );
   }
 
-  const BATCH_SIZE = 10;
-  const stats = { enriched: 0, not_found: 0, already_had_email: 0, errors: 0 };
+  const needsEnrichment = leads.filter(l => !l.email || l.email.trim() === '');
+  const alreadyHadEmail = leads.length - needsEnrichment.length;
 
-  for (let i = 0; i < leads.length; i += BATCH_SIZE) {
+  // Dry-run mode: return a preview without calling Apollo
+  if (dryRun) {
+    return {
+      dry_run: true,
+      total_leads: leads.length,
+      needs_enrichment: needsEnrichment.length,
+      already_had_email: alreadyHadEmail,
+      max_credits: needsEnrichment.length, // worst case: 1 reveal per lead
+      message: `Will attempt to enrich ${needsEnrichment.length} leads. Up to ${needsEnrichment.length} Apollo credits may be used for email reveals.`,
+    };
+  }
+
+  console.log(`[Apollo] Bulk enrichment starting: ${needsEnrichment.length} leads to process (max ${needsEnrichment.length} credits)`);
+
+  const BATCH_SIZE = 10;
+  const stats = { enriched: 0, not_found: 0, already_had_email: alreadyHadEmail, errors: 0, credits_used: 0 };
+
+  for (let i = 0; i < needsEnrichment.length; i += BATCH_SIZE) {
     if (i > 0) {
       await sleep(1000);
     }
 
-    const batch = leads.slice(i, i + BATCH_SIZE);
+    const batch = needsEnrichment.slice(i, i + BATCH_SIZE);
 
     for (const lead of batch) {
-      if (lead.email && lead.email.trim() !== '') {
-        stats.already_had_email++;
-        continue;
-      }
-
       try {
         const result = await enrichLead(lead.id);
         if (result.found) {
           stats.enriched++;
+          stats.credits_used += result.credits_used || 0;
         } else {
           stats.not_found++;
         }
@@ -319,7 +411,11 @@ async function enrichBulk({ leadIds, filter } = {}) {
         stats.errors++;
       }
     }
+
+    console.log(`[Apollo] Bulk progress: ${Math.min(i + BATCH_SIZE, needsEnrichment.length)}/${needsEnrichment.length} processed, ${stats.credits_used} credits used so far`);
   }
+
+  console.log(`[Apollo] Bulk enrichment complete: ${stats.enriched} enriched, ${stats.credits_used} credits used`);
 
   return stats;
 }
