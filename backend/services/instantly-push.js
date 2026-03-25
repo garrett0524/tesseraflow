@@ -1,5 +1,5 @@
 /**
- * Instantly.ai Campaign Push Service
+ * Instantly.ai Campaign Push Service (v2 API)
  *
  * Pushes enriched leads into Instantly email campaigns.
  * API key passed via Authorization header (Bearer token).
@@ -7,7 +7,7 @@
 
 const { query } = require('../database/pg');
 
-const INSTANTLY_BASE = 'https://api.instantly.ai/api/v1';
+const INSTANTLY_BASE = 'https://api.instantly.ai/api/v2';
 
 async function getApiKey() {
   const { rows: [setting] } = await query("SELECT value FROM settings WHERE key = 'instantly_api_key'");
@@ -20,11 +20,12 @@ async function getApiKey() {
 
 /**
  * List available Instantly campaigns.
+ * v2: GET /campaigns → { items: [...] }
  */
 async function getCampaigns() {
   const apiKey = await getApiKey();
 
-  const response = await fetch(`${INSTANTLY_BASE}/campaign/list`, {
+  const response = await fetch(`${INSTANTLY_BASE}/campaigns`, {
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`,
@@ -36,7 +37,7 @@ async function getCampaigns() {
   }
 
   const data = await response.json();
-  const campaigns = Array.isArray(data) ? data : (data.data || data.campaigns || []);
+  const campaigns = data.items || data.data || [];
 
   return campaigns.map(c => ({
     id: c.id,
@@ -46,6 +47,7 @@ async function getCampaigns() {
 
 /**
  * Push specific leads to an Instantly campaign.
+ * v2: POST /leads with campaign_id in body
  */
 async function pushLeadsToCampaign(leadIds, campaignId) {
   const apiKey = await getApiKey();
@@ -69,7 +71,7 @@ async function pushLeadsToCampaign(leadIds, campaignId) {
     const lastName = nameParts.slice(1).join(' ') || '';
 
     try {
-      const response = await fetch(`${INSTANTLY_BASE}/lead/add`, {
+      const response = await fetch(`${INSTANTLY_BASE}/leads`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

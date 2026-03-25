@@ -1,5 +1,5 @@
 /**
- * Instantly.ai Email Status Sync Service
+ * Instantly.ai Email Status Sync Service (v2 API)
  *
  * Syncs email statuses from Instantly campaigns back to TesseraFlow leads.
  * Handles both manual sync and webhook-based real-time updates.
@@ -8,7 +8,7 @@
 
 const { query } = require('../database/pg');
 
-const INSTANTLY_BASE = 'https://api.instantly.ai/api/v1';
+const INSTANTLY_BASE = 'https://api.instantly.ai/api/v2';
 
 async function getApiKey() {
   const { rows: [setting] } = await query("SELECT value FROM settings WHERE key = 'instantly_api_key'");
@@ -17,6 +17,7 @@ async function getApiKey() {
 
 /**
  * Sync email statuses from Instantly for all leads that have been pushed to a campaign.
+ * v2: GET /leads?campaign_id=X&email=Y
  */
 async function syncEmailStatuses() {
   const apiKey = await getApiKey();
@@ -33,7 +34,7 @@ async function syncEmailStatuses() {
 
   for (const lead of leads) {
     try {
-      const url = `${INSTANTLY_BASE}/lead/get?campaign_id=${encodeURIComponent(lead.instantly_campaign_id)}&email=${encodeURIComponent(lead.email)}`;
+      const url = `${INSTANTLY_BASE}/leads?campaign_id=${encodeURIComponent(lead.instantly_campaign_id)}&email=${encodeURIComponent(lead.email)}`;
 
       const response = await fetch(url, {
         headers: {
@@ -47,17 +48,19 @@ async function syncEmailStatuses() {
       }
 
       const data = await response.json();
+      // v2 may return { items: [...] } or a single lead object
+      const leadData = data.items?.[0] || data;
       stats.synced++;
 
       // Determine new status from Instantly data
       let newStatus = lead.email_status;
-      if (data.replied || data.has_replied) {
+      if (leadData.replied || leadData.has_replied) {
         newStatus = 'replied';
-      } else if (data.bounced || data.has_bounced) {
+      } else if (leadData.bounced || leadData.has_bounced) {
         newStatus = 'bounced';
-      } else if (data.opened || data.has_opened) {
+      } else if (leadData.opened || leadData.has_opened) {
         newStatus = 'opened';
-      } else if (data.sent || data.email_sent) {
+      } else if (leadData.sent || leadData.email_sent) {
         newStatus = 'sent';
       }
 
