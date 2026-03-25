@@ -78,7 +78,7 @@ async function enrichLead(leadId) {
     per_page: 5,
   };
 
-  const response = await fetch(`${APOLLO_BASE}/mixed_people/search`, {
+  const response = await fetch(`${APOLLO_BASE}/mixed_people/api_search`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -235,7 +235,7 @@ async function checkStatus() {
   }
 
   try {
-    const response = await fetch(`${APOLLO_BASE}/mixed_people/search`, {
+    const response = await fetch(`${APOLLO_BASE}/mixed_people/api_search`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
