@@ -47,7 +47,7 @@ async function getCampaigns() {
 
 /**
  * Push specific leads to an Instantly campaign.
- * v2: POST /leads with campaign_id in body
+ * v2: POST /leads with campaign in body
  */
 async function pushLeadsToCampaign(leadIds, campaignId) {
   const apiKey = await getApiKey();
@@ -78,7 +78,7 @@ async function pushLeadsToCampaign(leadIds, campaignId) {
           'Authorization': `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          campaign_id: campaignId,
+          campaign: campaignId,
           skip_if_in_workspace: false,
           leads: [{
             email: lead.email,
