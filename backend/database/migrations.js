@@ -20,6 +20,10 @@ const MIGRATIONS = [
   'ALTER TABLE leads ADD COLUMN IF NOT EXISTS auto_score INTEGER DEFAULT 0',
   'ALTER TABLE leads ADD COLUMN IF NOT EXISTS responded_to_outreach BOOLEAN DEFAULT false',
   'ALTER TABLE leads ADD COLUMN IF NOT EXISTS decision_maker_engaged BOOLEAN DEFAULT false',
+  // Manual prioritization tag (Hot / Warm / Cold / None) shown in the table
+  // and bulk-editable from the action bar.
+  'ALTER TABLE leads ADD COLUMN IF NOT EXISTS priority VARCHAR(20)',
+  'CREATE INDEX IF NOT EXISTS idx_leads_priority ON leads(priority)',
 ];
 
 // Pipeline stage CHECK constraint must be widened to allow the new stages

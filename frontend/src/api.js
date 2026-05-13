@@ -74,10 +74,18 @@ export const resetUserPassword = (id) => fetchApi(`/users/${id}/reset-password`,
 // Leads
 // ============================================================
 export const getLeads = (params = {}) => {
-  // Drop empty/null params so they don't appear as `key=` in the URL
-  const cleaned = Object.fromEntries(
-    Object.entries(params).filter(([, v]) => v !== '' && v !== null && v !== undefined)
-  );
+  // Drop empty/null params and collapse arrays to comma-separated strings
+  // (matches the backend's `multi()` parser).
+  const cleaned = {};
+  for (const [k, v] of Object.entries(params)) {
+    if (v === '' || v === null || v === undefined) continue;
+    if (Array.isArray(v)) {
+      if (v.length === 0) continue;
+      cleaned[k] = v.join(',');
+    } else {
+      cleaned[k] = v;
+    }
+  }
   const query = new URLSearchParams(cleaned).toString();
   return fetchApi(`/leads${query ? '?' + query : ''}`);
 };
@@ -102,6 +110,16 @@ export const updateLead = (id, data) => fetchApi(`/leads/${id}`, {
 
 export const deleteLead = (id) => fetchApi(`/leads/${id}`, {
   method: 'DELETE',
+});
+
+export const bulkUpdateLeads = (leadIds, updates) => fetchApi('/leads/bulk-update', {
+  method: 'POST',
+  body: JSON.stringify({ leadIds, updates }),
+});
+
+export const bulkDeleteLeads = (leadIds) => fetchApi('/leads/bulk-delete', {
+  method: 'POST',
+  body: JSON.stringify({ leadIds }),
 });
 
 export const importLeads = async (file) => {

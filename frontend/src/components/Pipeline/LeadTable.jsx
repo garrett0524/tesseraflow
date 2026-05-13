@@ -1,5 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { enrichLead, getLeads } from '../../api'
+import { useAuth } from '../../contexts/AuthContext'
+import MultiSelectFilter from './MultiSelectFilter'
+import BulkActionBar from './BulkActionBar'
 import './LeadTable.css'
 
 const STAGE_LABELS = {
@@ -15,9 +18,33 @@ const STAGE_LABELS = {
   dead: 'Dead',
 };
 
+const STAGE_OPTIONS = Object.entries(STAGE_LABELS).map(([value, label]) => ({ value, label }));
+
 const KNOWN_CATEGORIES = [
   'Bars', 'Restaurants', 'Gyms', 'Gambling & Casinos',
   'ISP', 'MSP', 'IT Services', 'WISP', 'Enterprise IT', 'Other',
+];
+
+const PRIORITY_OPTIONS = [
+  { value: 'Hot', label: 'Hot' },
+  { value: 'Warm', label: 'Warm' },
+  { value: 'Cold', label: 'Cold' },
+  { value: 'None', label: 'None / Unset' },
+];
+
+const PRIORITY_STYLE = {
+  Hot:  { bg: 'rgba(239,68,68,0.15)', color: '#ef4444' },
+  Warm: { bg: 'rgba(251,191,36,0.15)', color: '#fbbf24' },
+  Cold: { bg: 'rgba(96,165,250,0.15)', color: '#60a5fa' },
+};
+
+const EMAIL_STATUS_OPTIONS = [
+  { value: 'no_email', label: 'No Email' },
+  { value: 'has_email', label: 'Has Email' },
+  { value: 'sent', label: 'Sent' },
+  { value: 'opened', label: 'Opened' },
+  { value: 'replied', label: 'Replied' },
+  { value: 'bounced', label: 'Bounced' },
 ];
 
 const EMAIL_STATUS_DOT = {
@@ -31,6 +58,7 @@ const EMAIL_STATUS_DOT = {
 const PAGE_SIZE = 50;
 
 export default function LeadTable({ onRowClick, refreshToken = 0 }) {
+  const { isAdmin } = useAuth();
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
 
   // Sort state
@@ -47,17 +75,20 @@ export default function LeadTable({ onRowClick, refreshToken = 0 }) {
   const [loading, setLoading] = useState(true);
   const [enrichingId, setEnrichingId] = useState(null);
 
-  // Filter inputs (live) vs applied filters (sent to server, debounced)
+  // Selection state (lead IDs across all pages)
+  const [selectedIds, setSelectedIds] = useState([]);
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+
+  // Filters
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [filters, setFilters] = useState({
-    category: '',
-    stage: '',
-    attempts: '',
-    scoreMin: '',
-    scoreMax: '',
-    emailStatus: '',
-  });
+  const [categoryFilter, setCategoryFilter] = useState([]);
+  const [stageFilter, setStageFilter] = useState([]);
+  const [priorityFilter, setPriorityFilter] = useState([]);
+  const [emailStatusFilter, setEmailStatusFilter] = useState([]);
+  const [attempts, setAttempts] = useState('');
+  const [scoreMin, setScoreMin] = useState('');
+  const [scoreMax, setScoreMax] = useState('');
 
   // Debounce search 300ms
   useEffect(() => {
@@ -66,11 +97,10 @@ export default function LeadTable({ onRowClick, refreshToken = 0 }) {
   }, [search]);
 
   // Reset to page 1 whenever filters/search/sort change
+  const filterKey = `${debouncedSearch}|${categoryFilter.join(',')}|${stageFilter.join(',')}|${priorityFilter.join(',')}|${emailStatusFilter.join(',')}|${attempts}|${scoreMin}|${scoreMax}|${sortField}|${sortDir}`;
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, filters.category, filters.stage, filters.attempts,
-      filters.scoreMin, filters.scoreMax, filters.emailStatus,
-      sortField, sortDir]);
+  }, [filterKey]);
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth <= 768);
@@ -78,7 +108,6 @@ export default function LeadTable({ onRowClick, refreshToken = 0 }) {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Track in-flight requests so a slow earlier response can't overwrite a newer one
   const reqIdRef = useRef(0);
 
   const fetchPage = useCallback(async () => {
@@ -92,15 +121,16 @@ export default function LeadTable({ onRowClick, refreshToken = 0 }) {
         sort_dir: sortDir,
       };
       if (debouncedSearch) params.search = debouncedSearch;
-      if (filters.category) params.category = filters.category;
-      if (filters.stage) params.stage = filters.stage;
-      if (filters.attempts) params.attempts = filters.attempts;
-      if (filters.scoreMin) params.score_min = filters.scoreMin;
-      if (filters.scoreMax) params.score_max = filters.scoreMax;
-      if (filters.emailStatus) params.email_status = filters.emailStatus;
+      if (categoryFilter.length) params.category = categoryFilter;
+      if (stageFilter.length) params.stage = stageFilter;
+      if (priorityFilter.length) params.priority = priorityFilter;
+      if (emailStatusFilter.length) params.email_status = emailStatusFilter;
+      if (attempts) params.attempts = attempts;
+      if (scoreMin) params.score_min = scoreMin;
+      if (scoreMax) params.score_max = scoreMax;
 
       const res = await getLeads(params);
-      if (myReqId !== reqIdRef.current) return; // newer request landed first
+      if (myReqId !== reqIdRef.current) return;
       setLeads(res.data || []);
       setTotal(res.total || 0);
       setTotalPages(res.totalPages || 1);
@@ -114,7 +144,8 @@ export default function LeadTable({ onRowClick, refreshToken = 0 }) {
     } finally {
       if (myReqId === reqIdRef.current) setLoading(false);
     }
-  }, [page, sortField, sortDir, debouncedSearch, filters]);
+  }, [page, sortField, sortDir, debouncedSearch, categoryFilter, stageFilter,
+      priorityFilter, emailStatusFilter, attempts, scoreMin, scoreMax]);
 
   useEffect(() => {
     fetchPage();
@@ -148,12 +179,38 @@ export default function LeadTable({ onRowClick, refreshToken = 0 }) {
     if (clamped !== page) setPage(clamped);
   };
 
+  // Selection helpers
+  const toggleRow = (id) => {
+    setSelectedIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  };
+
+  const pageIds = leads.map(l => l.id);
+  const allOnPageSelected = pageIds.length > 0 && pageIds.every(id => selectedSet.has(id));
+  const someOnPageSelected = pageIds.some(id => selectedSet.has(id));
+
+  const togglePageSelection = () => {
+    if (allOnPageSelected) {
+      setSelectedIds(prev => prev.filter(id => !pageIds.includes(id)));
+    } else {
+      setSelectedIds(prev => [...new Set([...prev, ...pageIds])]);
+    }
+  };
+
+  const clearSelection = () => setSelectedIds([]);
+
+  const handleBulkComplete = () => {
+    setSelectedIds([]);
+    fetchPage();
+  };
+
   // Categories shown in filter dropdown: known set ∪ what's in the current page
-  const categoryOptions = (() => {
+  const categoryOptions = useMemo(() => {
     const cats = new Set(leads.map(l => l.category).filter(Boolean));
     for (const c of KNOWN_CATEGORIES) cats.add(c);
     return [...cats].sort();
-  })();
+  }, [leads]);
 
   const showingFrom = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const showingTo = Math.min(total, page * PAGE_SIZE);
@@ -169,41 +226,52 @@ export default function LeadTable({ onRowClick, refreshToken = 0 }) {
           onChange={e => setSearch(e.target.value)}
           className="lead-search"
         />
-        <select value={filters.category} onChange={e => setFilters(f => ({ ...f, category: e.target.value }))}>
-          <option value="">All Categories</option>
-          {categoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
-        <select value={filters.stage} onChange={e => setFilters(f => ({ ...f, stage: e.target.value }))}>
-          <option value="">All Stages</option>
-          {Object.entries(STAGE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-        </select>
-        <select value={filters.attempts} onChange={e => setFilters(f => ({ ...f, attempts: e.target.value }))}>
+        <MultiSelectFilter
+          label="Category"
+          options={categoryOptions}
+          selected={categoryFilter}
+          onChange={setCategoryFilter}
+          width={150}
+        />
+        <MultiSelectFilter
+          label="Stage"
+          options={STAGE_OPTIONS}
+          selected={stageFilter}
+          onChange={setStageFilter}
+          width={150}
+        />
+        <MultiSelectFilter
+          label="Priority"
+          options={PRIORITY_OPTIONS}
+          selected={priorityFilter}
+          onChange={setPriorityFilter}
+          width={140}
+        />
+        <MultiSelectFilter
+          label="Email Status"
+          options={EMAIL_STATUS_OPTIONS}
+          selected={emailStatusFilter}
+          onChange={setEmailStatusFilter}
+          width={150}
+        />
+        <select value={attempts} onChange={e => setAttempts(e.target.value)}>
           <option value="">All Attempts</option>
           <option value="0">0 attempts</option>
           <option value="1-3">1-3 attempts</option>
           <option value="4+">4+ attempts</option>
         </select>
-        <select value={filters.emailStatus} onChange={e => setFilters(f => ({ ...f, emailStatus: e.target.value }))}>
-          <option value="">Email Status</option>
-          <option value="no_email">No Email</option>
-          <option value="has_email">Has Email</option>
-          <option value="sent">Sent</option>
-          <option value="opened">Opened</option>
-          <option value="replied">Replied</option>
-          <option value="bounced">Bounced</option>
-        </select>
         <input
           type="number"
           placeholder="Score min"
-          value={filters.scoreMin}
-          onChange={e => setFilters(f => ({ ...f, scoreMin: e.target.value }))}
+          value={scoreMin}
+          onChange={e => setScoreMin(e.target.value)}
           style={{ width: '100px' }}
         />
         <input
           type="number"
           placeholder="Score max"
-          value={filters.scoreMax}
-          onChange={e => setFilters(f => ({ ...f, scoreMax: e.target.value }))}
+          value={scoreMax}
+          onChange={e => setScoreMax(e.target.value)}
           style={{ width: '100px' }}
         />
       </div>
@@ -220,47 +288,58 @@ export default function LeadTable({ onRowClick, refreshToken = 0 }) {
               {total === 0 ? 'No leads match filters' : 'No leads on this page'}
             </div>
           ) : (
-            leads.map(lead => (
-              <div
-                key={lead.id}
-                onClick={() => onRowClick(lead)}
-                style={{
-                  background: 'var(--bg-card-elevated)',
-                  border: '1px solid var(--border-default)',
-                  borderRadius: 'var(--radius-md)',
-                  padding: 'var(--space-md)',
-                  marginBottom: 'var(--space-sm)',
-                  cursor: 'pointer',
-                  minHeight: '44px',
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--space-xs)' }}>
-                  <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {lead.business_name}
-                  </div>
-                  <span style={{
-                    fontWeight: 700,
-                    fontSize: '14px',
-                    marginLeft: 'var(--space-sm)',
-                    flexShrink: 0,
-                    color: lead.lead_score >= 70 ? 'var(--color-success)' :
-                           lead.lead_score >= 40 ? 'var(--color-warning)' : 'var(--text-secondary)'
-                  }}>
-                    {lead.lead_score || 0}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
-                  {lead.category && (
-                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                      {lead.category}
+            leads.map(lead => {
+              const checked = selectedSet.has(lead.id);
+              return (
+                <div
+                  key={lead.id}
+                  onClick={() => onRowClick(lead)}
+                  style={{
+                    background: checked ? 'rgba(99,102,241,0.08)' : 'var(--bg-card-elevated)',
+                    border: checked ? '1px solid var(--accent-primary)' : '1px solid var(--border-default)',
+                    borderRadius: 'var(--radius-md)',
+                    padding: 'var(--space-md)',
+                    marginBottom: 'var(--space-sm)',
+                    cursor: 'pointer',
+                    minHeight: '44px',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--space-xs)', gap: 'var(--space-sm)' }}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleRow(lead.id)}
+                      onClick={e => e.stopPropagation()}
+                      style={{ flexShrink: 0, marginTop: 2 }}
+                    />
+                    <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-primary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {lead.business_name}
+                    </div>
+                    <span style={{
+                      fontWeight: 700,
+                      fontSize: '14px',
+                      marginLeft: 'var(--space-sm)',
+                      flexShrink: 0,
+                      color: lead.lead_score >= 70 ? 'var(--color-success)' :
+                             lead.lead_score >= 40 ? 'var(--color-warning)' : 'var(--text-secondary)'
+                    }}>
+                      {lead.lead_score || 0}
                     </span>
-                  )}
-                  <span className={`badge badge-${lead.pipeline_stage}`}>
-                    {STAGE_LABELS[lead.pipeline_stage] || lead.pipeline_stage}
-                  </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+                    {lead.category && (
+                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                        {lead.category}
+                      </span>
+                    )}
+                    {lead.priority && <PriorityBadge value={lead.priority} />}
+                    <span className={`badge badge-${lead.pipeline_stage}`}>
+                      {STAGE_LABELS[lead.pipeline_stage] || lead.pipeline_stage}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       ) : (
@@ -269,6 +348,17 @@ export default function LeadTable({ onRowClick, refreshToken = 0 }) {
           <table className="data-table">
             <thead>
               <tr>
+                <th style={{ width: 36, textAlign: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={allOnPageSelected}
+                    ref={el => {
+                      if (el) el.indeterminate = !allOnPageSelected && someOnPageSelected;
+                    }}
+                    onChange={togglePageSelection}
+                    onClick={e => e.stopPropagation()}
+                  />
+                </th>
                 <th onClick={() => handleSort('business_name')}>Name <SortIcon field="business_name" /></th>
                 <th onClick={() => handleSort('category')}>Category <SortIcon field="category" /></th>
                 <th>Address</th>
@@ -277,6 +367,7 @@ export default function LeadTable({ onRowClick, refreshToken = 0 }) {
                 <th>Email</th>
                 <th onClick={() => handleSort('estimated_locations')}>Locations <SortIcon field="estimated_locations" /></th>
                 <th>Hardware</th>
+                <th>Priority</th>
                 <th onClick={() => handleSort('pipeline_stage')}>Stage <SortIcon field="pipeline_stage" /></th>
                 <th onClick={() => handleSort('last_contact_date')}>Last Contact <SortIcon field="last_contact_date" /></th>
                 <th onClick={() => handleSort('contact_attempts')}>Attempts <SortIcon field="contact_attempts" /></th>
@@ -287,97 +378,119 @@ export default function LeadTable({ onRowClick, refreshToken = 0 }) {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={13} style={{ textAlign: 'center', color: 'var(--text-tertiary)', padding: 'var(--space-3xl)' }}>
+                  <td colSpan={15} style={{ textAlign: 'center', color: 'var(--text-tertiary)', padding: 'var(--space-3xl)' }}>
                     Loading...
                   </td>
                 </tr>
               ) : leads.length === 0 ? (
                 <tr>
-                  <td colSpan={13} style={{ textAlign: 'center', color: 'var(--text-tertiary)', padding: 'var(--space-3xl)' }}>
+                  <td colSpan={15} style={{ textAlign: 'center', color: 'var(--text-tertiary)', padding: 'var(--space-3xl)' }}>
                     {total === 0 ? 'No leads match filters' : 'No leads on this page'}
                   </td>
                 </tr>
               ) : (
-                leads.map(lead => (
-                  <tr key={lead.id} onClick={() => onRowClick(lead)} style={{ cursor: 'pointer' }}>
-                    <td style={{ fontWeight: 500 }}>{lead.business_name}</td>
-                    <td>{lead.category || '-'}</td>
-                    <td style={{ maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {lead.address ? `${lead.address}, ${lead.city || ''}` : '-'}
-                    </td>
-                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: '13px' }}>
-                      {lead.phone || lead.direct_phone || '-'}
-                    </td>
-                    <td>
-                      {lead.owner_name
-                        ? lead.owner_name
-                        : (lead.contact_name
-                            ? (
-                                <span>
-                                  {lead.contact_name}
-                                  {lead.contact_title && (
-                                    <span style={{ fontSize: '11px', color: 'var(--text-tertiary)', display: 'block' }}>
-                                      {lead.contact_title}
-                                    </span>
-                                  )}
-                                </span>
-                              )
-                            : '-'
+                leads.map(lead => {
+                  const checked = selectedSet.has(lead.id);
+                  return (
+                    <tr
+                      key={lead.id}
+                      onClick={() => onRowClick(lead)}
+                      style={{
+                        cursor: 'pointer',
+                        background: checked ? 'rgba(99,102,241,0.06)' : undefined,
+                      }}
+                    >
+                      <td
+                        style={{ width: 36, textAlign: 'center' }}
+                        onClick={e => { e.stopPropagation(); toggleRow(lead.id); }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleRow(lead.id)}
+                          onClick={e => e.stopPropagation()}
+                        />
+                      </td>
+                      <td style={{ fontWeight: 500 }}>{lead.business_name}</td>
+                      <td>{lead.category || '-'}</td>
+                      <td style={{ maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {lead.address ? `${lead.address}, ${lead.city || ''}` : '-'}
+                      </td>
+                      <td style={{ fontFamily: 'var(--font-mono)', fontSize: '13px' }}>
+                        {lead.phone || lead.direct_phone || '-'}
+                      </td>
+                      <td>
+                        {lead.owner_name
+                          ? lead.owner_name
+                          : (lead.contact_name
+                              ? (
+                                  <span>
+                                    {lead.contact_name}
+                                    {lead.contact_title && (
+                                      <span style={{ fontSize: '11px', color: 'var(--text-tertiary)', display: 'block' }}>
+                                        {lead.contact_title}
+                                      </span>
+                                    )}
+                                  </span>
+                                )
+                              : '-'
+                          )}
+                      </td>
+                      <td style={{ maxWidth: '180px' }}>
+                        {lead.email ? (
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px' }}>
+                            <span style={{
+                              width: '7px', height: '7px', borderRadius: '50%', flexShrink: 0,
+                              background: EMAIL_STATUS_DOT[lead.email_status || 'none'] || EMAIL_STATUS_DOT.none,
+                            }} />
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lead.email}</span>
+                          </span>
+                        ) : (
+                          <button
+                            onClick={(e) => handleEnrich(lead, e)}
+                            disabled={enrichingId === lead.id}
+                            style={{
+                              background: 'none', border: 'none', color: '#8b5cf6', cursor: 'pointer',
+                              fontSize: '12px', padding: 0, textDecoration: 'underline',
+                            }}
+                          >
+                            {enrichingId === lead.id ? 'Enriching...' : 'Enrich'}
+                          </button>
                         )}
-                    </td>
-                    <td style={{ maxWidth: '180px' }}>
-                      {lead.email ? (
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px' }}>
-                          <span style={{
-                            width: '7px', height: '7px', borderRadius: '50%', flexShrink: 0,
-                            background: EMAIL_STATUS_DOT[lead.email_status || 'none'] || EMAIL_STATUS_DOT.none,
-                          }} />
-                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lead.email}</span>
+                      </td>
+                      <td style={{ textAlign: 'center', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                        {lead.estimated_locations != null && lead.estimated_locations !== '' ? lead.estimated_locations : '-'}
+                      </td>
+                      <td style={{ maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                        {lead.hardware_vendors || '-'}
+                      </td>
+                      <td><PriorityBadge value={lead.priority} /></td>
+                      <td>
+                        <span className={`badge badge-${lead.pipeline_stage}`}>
+                          {STAGE_LABELS[lead.pipeline_stage] || lead.pipeline_stage}
                         </span>
-                      ) : (
-                        <button
-                          onClick={(e) => handleEnrich(lead, e)}
-                          disabled={enrichingId === lead.id}
-                          style={{
-                            background: 'none', border: 'none', color: '#8b5cf6', cursor: 'pointer',
-                            fontSize: '12px', padding: 0, textDecoration: 'underline',
-                          }}
-                        >
-                          {enrichingId === lead.id ? 'Enriching...' : 'Enrich'}
-                        </button>
-                      )}
-                    </td>
-                    <td style={{ textAlign: 'center', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                      {lead.estimated_locations != null && lead.estimated_locations !== '' ? lead.estimated_locations : '-'}
-                    </td>
-                    <td style={{ maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                      {lead.hardware_vendors || '-'}
-                    </td>
-                    <td>
-                      <span className={`badge badge-${lead.pipeline_stage}`}>
-                        {STAGE_LABELS[lead.pipeline_stage] || lead.pipeline_stage}
-                      </span>
-                    </td>
-                    <td>
-                      {lead.last_contact_date
-                        ? `${String(lead.last_contact_date).split('T')[0]} (${lead.last_contact_method || '-'})`
-                        : 'Never'}
-                    </td>
-                    <td style={{ textAlign: 'center' }}>{lead.contact_attempts || 0}</td>
-                    <td>
-                      <span style={{
-                        fontWeight: 600,
-                        color: lead.lead_score >= 70 ? 'var(--color-success)' :
-                               lead.lead_score >= 40 ? 'var(--color-warning)' : 'var(--text-secondary)'
-                      }}>
-                        {lead.lead_score || 0}
-                      </span>
-                    </td>
-                    <td style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                      {lead.created_at ? String(lead.created_at).split('T')[0] : '-'}
-                    </td>
-                  </tr>
-                ))
+                      </td>
+                      <td>
+                        {lead.last_contact_date
+                          ? `${String(lead.last_contact_date).split('T')[0]} (${lead.last_contact_method || '-'})`
+                          : 'Never'}
+                      </td>
+                      <td style={{ textAlign: 'center' }}>{lead.contact_attempts || 0}</td>
+                      <td>
+                        <span style={{
+                          fontWeight: 600,
+                          color: lead.lead_score >= 70 ? 'var(--color-success)' :
+                                 lead.lead_score >= 40 ? 'var(--color-warning)' : 'var(--text-secondary)'
+                        }}>
+                          {lead.lead_score || 0}
+                        </span>
+                      </td>
+                      <td style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                        {lead.created_at ? String(lead.created_at).split('T')[0] : '-'}
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -391,6 +504,7 @@ export default function LeadTable({ onRowClick, refreshToken = 0 }) {
         alignItems: 'center',
         gap: 'var(--space-md)',
         flexWrap: 'wrap',
+        paddingBottom: selectedIds.length > 0 ? 80 : undefined,
       }}>
         <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>
           {total === 0
@@ -417,6 +531,34 @@ export default function LeadTable({ onRowClick, refreshToken = 0 }) {
           </button>
         </div>
       </div>
+
+      <BulkActionBar
+        selectedIds={selectedIds}
+        onClearSelection={clearSelection}
+        onComplete={handleBulkComplete}
+        isAdmin={isAdmin}
+      />
     </div>
+  );
+}
+
+function PriorityBadge({ value }) {
+  if (!value || String(value).toLowerCase() === 'none') {
+    return <span style={{ color: 'var(--text-tertiary)', fontSize: '12px' }}>-</span>;
+  }
+  const style = PRIORITY_STYLE[value] || { bg: 'rgba(107,114,128,0.15)', color: '#9ca3af' };
+  return (
+    <span style={{
+      display: 'inline-block',
+      padding: '2px 8px',
+      borderRadius: 'var(--radius-full)',
+      fontSize: '11px',
+      fontWeight: 600,
+      background: style.bg,
+      color: style.color,
+      textTransform: 'uppercase',
+    }}>
+      {value}
+    </span>
   );
 }

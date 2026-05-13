@@ -20,20 +20,59 @@ const upload = multer({
   }
 });
 
+// Split a query-string value into an array of distinct values. Accepts
+// either a comma-separated string ("Bars,Restaurants") or an already-parsed
+// array (Express does this when the same key appears multiple times).
+function multi(value) {
+  if (value === undefined || value === null || value === '') return [];
+  const arr = Array.isArray(value) ? value : String(value).split(',');
+  return arr.map(v => String(v).trim()).filter(Boolean);
+}
+
 // Build the WHERE clause shared by list + count so the two stay in lockstep.
+// Supports multi-value filters: pass `category=A,B,C` to match any of A/B/C.
 function buildLeadsWhere(qs, startIdx = 1) {
   const params = [];
   let idx = startIdx;
   let sql = '';
 
-  if (qs.category) {
+  const categories = multi(qs.category);
+  if (categories.length === 1) {
     sql += ` AND category = $${idx++}`;
-    params.push(qs.category);
+    params.push(categories[0]);
+  } else if (categories.length > 1) {
+    const placeholders = categories.map(() => `$${idx++}`).join(',');
+    sql += ` AND category IN (${placeholders})`;
+    params.push(...categories);
   }
-  if (qs.stage) {
+
+  const stages = multi(qs.stage);
+  if (stages.length === 1) {
     sql += ` AND pipeline_stage = $${idx++}`;
-    params.push(qs.stage);
+    params.push(stages[0]);
+  } else if (stages.length > 1) {
+    const placeholders = stages.map(() => `$${idx++}`).join(',');
+    sql += ` AND pipeline_stage IN (${placeholders})`;
+    params.push(...stages);
   }
+
+  const priorities = multi(qs.priority);
+  if (priorities.length > 0) {
+    // Treat "None" as either NULL or the literal string "None"
+    const wantsNone = priorities.some(p => p.toLowerCase() === 'none');
+    const named = priorities.filter(p => p.toLowerCase() !== 'none');
+    const clauses = [];
+    if (named.length > 0) {
+      const placeholders = named.map(() => `$${idx++}`).join(',');
+      clauses.push(`priority IN (${placeholders})`);
+      params.push(...named);
+    }
+    if (wantsNone) {
+      clauses.push(`(priority IS NULL OR priority = '' OR LOWER(priority) = 'none')`);
+    }
+    sql += ` AND (${clauses.join(' OR ')})`;
+  }
+
   if (qs.score_min) {
     sql += ` AND lead_score >= $${idx++}`;
     params.push(Number(qs.score_min));
@@ -50,16 +89,28 @@ function buildLeadsWhere(qs, startIdx = 1) {
     sql += ` AND created_at <= $${idx++}`;
     params.push(qs.date_to);
   }
-  if (qs.email_status) {
-    if (qs.email_status === 'no_email') {
-      sql += ` AND (email IS NULL OR email = '')`;
-    } else if (qs.email_status === 'has_email') {
-      sql += ` AND email IS NOT NULL AND email <> ''`;
-    } else {
-      sql += ` AND email_status = $${idx++}`;
-      params.push(qs.email_status);
+
+  const emailStatuses = multi(qs.email_status);
+  if (emailStatuses.length > 0) {
+    const clauses = [];
+    const named = [];
+    for (const v of emailStatuses) {
+      if (v === 'no_email') {
+        clauses.push(`(email IS NULL OR email = '')`);
+      } else if (v === 'has_email') {
+        clauses.push(`(email IS NOT NULL AND email <> '')`);
+      } else {
+        named.push(v);
+      }
     }
+    if (named.length > 0) {
+      const placeholders = named.map(() => `$${idx++}`).join(',');
+      clauses.push(`email_status IN (${placeholders})`);
+      params.push(...named);
+    }
+    sql += ` AND (${clauses.join(' OR ')})`;
   }
+
   if (qs.attempts) {
     if (qs.attempts === '0') {
       sql += ` AND COALESCE(contact_attempts, 0) = 0`;
@@ -293,6 +344,8 @@ router.put('/:id', async (req, res) => {
       'geographic_reach', 'discovery_score', 'compatible_hardware',
       'deployment_timeline', 'auto_score', 'responded_to_outreach',
       'decision_maker_engaged',
+      // Manual priority tag
+      'priority',
     ];
 
     const updates = [];
@@ -361,6 +414,78 @@ router.delete('/:id', requireAdmin, async (req, res) => {
     res.json({ message: 'Lead deleted', data: lead });
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete lead', message: err.message });
+  }
+});
+
+// POST /api/leads/bulk-update — apply the same field updates to many leads
+// at once. Body: { leadIds: number[], updates: { priority?, pipeline_stage?, category? } }
+const BULK_UPDATE_FIELDS = ['priority', 'pipeline_stage', 'category'];
+router.post('/bulk-update', async (req, res) => {
+  try {
+    const leadIds = Array.isArray(req.body?.leadIds) ? req.body.leadIds.map(Number).filter(Number.isFinite) : [];
+    const updates = req.body?.updates || {};
+
+    if (leadIds.length === 0) {
+      return res.status(400).json({ error: 'leadIds is required and must be non-empty' });
+    }
+
+    const setClauses = [];
+    const params = [];
+    let idx = 1;
+
+    for (const field of BULK_UPDATE_FIELDS) {
+      if (updates[field] === undefined) continue;
+      let value = updates[field];
+      if (field === 'category') value = normalizeCategoryValue(value);
+      // Allow explicit null (e.g. clearing priority via "None")
+      setClauses.push(`${field} = $${idx++}`);
+      params.push(value === undefined ? null : value);
+    }
+
+    if (setClauses.length === 0) {
+      return res.status(400).json({ error: 'No supported fields to update' });
+    }
+
+    setClauses.push('updated_at = NOW()');
+    const idsPlaceholder = `$${idx}`;
+    params.push(leadIds);
+
+    const { rowCount } = await query(
+      `UPDATE leads SET ${setClauses.join(', ')} WHERE id = ANY(${idsPlaceholder}::int[])`,
+      params
+    );
+
+    // If category or pipeline_stage changed, re-score affected leads since
+    // those are scoring inputs.
+    const rescoreNeeded = updates.category !== undefined || updates.pipeline_stage !== undefined;
+    if (rescoreNeeded) {
+      for (const id of leadIds) {
+        try { await scoreLead(id); } catch (e) { /* keep going */ }
+      }
+    }
+
+    res.json({ message: 'Bulk update complete', updated: rowCount });
+  } catch (err) {
+    res.status(500).json({ error: 'Bulk update failed', message: err.message });
+  }
+});
+
+// POST /api/leads/bulk-delete — admin only. Body: { leadIds: number[] }
+router.post('/bulk-delete', requireAdmin, async (req, res) => {
+  try {
+    const leadIds = Array.isArray(req.body?.leadIds) ? req.body.leadIds.map(Number).filter(Number.isFinite) : [];
+    if (leadIds.length === 0) {
+      return res.status(400).json({ error: 'leadIds is required and must be non-empty' });
+    }
+
+    const { rowCount } = await query(
+      'DELETE FROM leads WHERE id = ANY($1::int[])',
+      [leadIds]
+    );
+
+    res.json({ message: 'Bulk delete complete', deleted: rowCount });
+  } catch (err) {
+    res.status(500).json({ error: 'Bulk delete failed', message: err.message });
   }
 });
 
