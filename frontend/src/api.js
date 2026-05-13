@@ -112,14 +112,27 @@ export const deleteLead = (id) => fetchApi(`/leads/${id}`, {
   method: 'DELETE',
 });
 
-export const bulkUpdateLeads = (leadIds, updates) => fetchApi('/leads/bulk-update', {
+// Bulk endpoints accept either an array of ids (specific selection) or a
+// selection object { selectAll: true, filters: { category, stage, priority, emailStatus } }
+// for the "all leads matching the current filters" case.
+function bulkSelectionBody(selection) {
+  if (Array.isArray(selection)) {
+    return { leadIds: selection };
+  }
+  if (selection && selection.selectAll) {
+    return { selectAll: true, filters: selection.filters || {} };
+  }
+  return { leadIds: [] };
+}
+
+export const bulkUpdateLeads = (selection, updates) => fetchApi('/leads/bulk-update', {
   method: 'POST',
-  body: JSON.stringify({ leadIds, updates }),
+  body: JSON.stringify({ ...bulkSelectionBody(selection), updates }),
 });
 
-export const bulkDeleteLeads = (leadIds) => fetchApi('/leads/bulk-delete', {
+export const bulkDeleteLeads = (selection) => fetchApi('/leads/bulk-delete', {
   method: 'POST',
-  body: JSON.stringify({ leadIds }),
+  body: JSON.stringify(bulkSelectionBody(selection)),
 });
 
 export const importLeads = async (file) => {

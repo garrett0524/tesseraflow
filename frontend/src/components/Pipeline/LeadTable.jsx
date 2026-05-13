@@ -79,6 +79,10 @@ export default function LeadTable({ onRowClick, refreshToken = 0 }) {
   const [selectedIds, setSelectedIds] = useState([]);
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
+  // "Select all matching filters" mode — when true, every lead matching the
+  // current filter set is considered selected, not just the visible page.
+  const [selectAllMatching, setSelectAllMatching] = useState(false);
+
   // Filters
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -96,10 +100,12 @@ export default function LeadTable({ onRowClick, refreshToken = 0 }) {
     return () => clearTimeout(t);
   }, [search]);
 
-  // Reset to page 1 whenever filters/search/sort change
+  // Reset to page 1 whenever filters/search/sort change. Also drop the
+  // select-all-matching flag — the filter set it was bound to no longer applies.
   const filterKey = `${debouncedSearch}|${categoryFilter.join(',')}|${stageFilter.join(',')}|${priorityFilter.join(',')}|${emailStatusFilter.join(',')}|${attempts}|${scoreMin}|${scoreMax}|${sortField}|${sortDir}`;
   useEffect(() => {
     setPage(1);
+    setSelectAllMatching(false);
   }, [filterKey]);
 
   useEffect(() => {
@@ -181,16 +187,31 @@ export default function LeadTable({ onRowClick, refreshToken = 0 }) {
 
   // Selection helpers
   const toggleRow = (id) => {
+    // Toggling an individual row drops select-all-matching mode: the user is
+    // narrowing their selection, so we collapse to the page's checked rows
+    // minus (or plus) this one.
+    if (selectAllMatching) {
+      setSelectAllMatching(false);
+      setSelectedIds(pageIds.filter(x => x !== id));
+      return;
+    }
     setSelectedIds(prev =>
       prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
     );
   };
 
   const pageIds = leads.map(l => l.id);
-  const allOnPageSelected = pageIds.length > 0 && pageIds.every(id => selectedSet.has(id));
-  const someOnPageSelected = pageIds.some(id => selectedSet.has(id));
+  const allOnPageSelected = selectAllMatching ||
+    (pageIds.length > 0 && pageIds.every(id => selectedSet.has(id)));
+  const someOnPageSelected = !selectAllMatching && pageIds.some(id => selectedSet.has(id));
 
   const togglePageSelection = () => {
+    if (selectAllMatching) {
+      // Header click while in select-all mode clears everything.
+      setSelectAllMatching(false);
+      setSelectedIds([]);
+      return;
+    }
     if (allOnPageSelected) {
       setSelectedIds(prev => prev.filter(id => !pageIds.includes(id)));
     } else {
@@ -198,12 +219,36 @@ export default function LeadTable({ onRowClick, refreshToken = 0 }) {
     }
   };
 
-  const clearSelection = () => setSelectedIds([]);
+  const clearSelection = () => {
+    setSelectedIds([]);
+    setSelectAllMatching(false);
+  };
 
   const handleBulkComplete = () => {
     setSelectedIds([]);
+    setSelectAllMatching(false);
     fetchPage();
   };
+
+  // The filter set that defines what "all matching" means on the server.
+  // Mirrors every filter that affects the displayed `total`, so the bulk
+  // action count always matches the Y shown in the banner.
+  const currentFilters = useMemo(() => ({
+    category: categoryFilter,
+    stage: stageFilter,
+    priority: priorityFilter,
+    emailStatus: emailStatusFilter,
+    search: debouncedSearch,
+    scoreMin: scoreMin,
+    scoreMax: scoreMax,
+    attempts: attempts,
+  }), [categoryFilter, stageFilter, priorityFilter, emailStatusFilter,
+       debouncedSearch, scoreMin, scoreMax, attempts]);
+
+  // The banner only makes sense when (a) every visible row is checked and
+  // (b) there's at least one more lead outside the current page.
+  const showSelectAllBanner =
+    !selectAllMatching && allOnPageSelected && pageIds.length > 0 && total > pageIds.length;
 
   // Categories shown in filter dropdown: known set ∪ what's in the current page
   const categoryOptions = useMemo(() => {
@@ -276,6 +321,71 @@ export default function LeadTable({ onRowClick, refreshToken = 0 }) {
         />
       </div>
 
+      {/* Select-all banner — surfaces when the page is fully checked but more
+          leads match the current filters. */}
+      {(showSelectAllBanner || selectAllMatching) && (
+        <div
+          style={{
+            background: selectAllMatching ? 'rgba(99,102,241,0.14)' : 'rgba(99,102,241,0.08)',
+            border: '1px solid var(--accent-primary)',
+            borderRadius: 'var(--radius-md)',
+            padding: '8px 14px',
+            margin: 'var(--space-sm) 0',
+            fontSize: '13px',
+            color: 'var(--text-primary)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--space-sm)',
+            flexWrap: 'wrap',
+          }}
+        >
+          {selectAllMatching ? (
+            <>
+              <span>
+                All <strong>{total.toLocaleString()}</strong> leads matching current filters are selected.
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectAllMatching(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--accent-primary)',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  textDecoration: 'underline',
+                  padding: 0,
+                }}
+              >
+                Clear selection
+              </button>
+            </>
+          ) : (
+            <>
+              <span>
+                All <strong>{pageIds.length}</strong> leads on this page selected.
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectAllMatching(true)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--accent-primary)',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  textDecoration: 'underline',
+                  padding: 0,
+                  fontWeight: 600,
+                }}
+              >
+                Select all {total.toLocaleString()} leads matching current filters.
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Mobile Card View */}
       {isMobile ? (
         <div className="lead-card-list" style={{ padding: 'var(--space-sm)' }}>
@@ -289,7 +399,7 @@ export default function LeadTable({ onRowClick, refreshToken = 0 }) {
             </div>
           ) : (
             leads.map(lead => {
-              const checked = selectedSet.has(lead.id);
+              const checked = selectAllMatching || selectedSet.has(lead.id);
               return (
                 <div
                   key={lead.id}
@@ -390,7 +500,7 @@ export default function LeadTable({ onRowClick, refreshToken = 0 }) {
                 </tr>
               ) : (
                 leads.map(lead => {
-                  const checked = selectedSet.has(lead.id);
+                  const checked = selectAllMatching || selectedSet.has(lead.id);
                   return (
                     <tr
                       key={lead.id}
@@ -504,7 +614,7 @@ export default function LeadTable({ onRowClick, refreshToken = 0 }) {
         alignItems: 'center',
         gap: 'var(--space-md)',
         flexWrap: 'wrap',
-        paddingBottom: selectedIds.length > 0 ? 80 : undefined,
+        paddingBottom: (selectedIds.length > 0 || selectAllMatching) ? 80 : undefined,
       }}>
         <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>
           {total === 0
@@ -534,6 +644,9 @@ export default function LeadTable({ onRowClick, refreshToken = 0 }) {
 
       <BulkActionBar
         selectedIds={selectedIds}
+        selectAll={selectAllMatching}
+        filters={currentFilters}
+        totalMatching={total}
         onClearSelection={clearSelection}
         onComplete={handleBulkComplete}
         isAdmin={isAdmin}

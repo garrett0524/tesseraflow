@@ -29,11 +29,17 @@ const PRIORITY_OPTIONS = ['Hot', 'Warm', 'Cold', 'None'];
 
 export default function BulkActionBar({
   selectedIds,
+  selectAll = false,
+  filters = {},
+  totalMatching = 0,
   onClearSelection,
   onComplete,
   isAdmin,
 }) {
-  const count = selectedIds.length;
+  // In selectAll mode, the count is the server-reported total of matching leads,
+  // not the visible page selection.
+  const count = selectAll ? totalMatching : selectedIds.length;
+  const selection = selectAll ? { selectAll: true, filters } : selectedIds;
   const [openMenu, setOpenMenu] = useState(null); // 'priority' | 'stage' | 'category' | 'campaign' | null
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(null); // string or null
@@ -67,7 +73,7 @@ export default function BulkActionBar({
     try {
       // "None" maps to null on the server side
       const payload = value === 'None' ? null : value;
-      await bulkUpdateLeads(selectedIds, { priority: payload });
+      await bulkUpdateLeads(selection, { priority: payload });
       finish(`Priority set to ${value} on ${count} leads`);
     } catch (err) {
       setBusy(false);
@@ -78,7 +84,7 @@ export default function BulkActionBar({
   const handleSetStage = async (value) => {
     setBusy(true);
     try {
-      await bulkUpdateLeads(selectedIds, { pipeline_stage: value });
+      await bulkUpdateLeads(selection, { pipeline_stage: value });
       finish(`Stage updated on ${count} leads`);
     } catch (err) {
       setBusy(false);
@@ -89,7 +95,7 @@ export default function BulkActionBar({
   const handleSetCategory = async (value) => {
     setBusy(true);
     try {
-      await bulkUpdateLeads(selectedIds, { category: value });
+      await bulkUpdateLeads(selection, { category: value });
       finish(`Category set to ${value} on ${count} leads`);
     } catch (err) {
       setBusy(false);
@@ -97,6 +103,8 @@ export default function BulkActionBar({
     }
   };
 
+  // Enrich and Push-to-Instantly iterate over ids client-side, so they're
+  // only available with a concrete selection — not the unbounded selectAll set.
   const handleEnrich = async () => {
     setBusy(true);
     let done = 0, failed = 0;
@@ -139,7 +147,7 @@ export default function BulkActionBar({
   const handleDelete = async () => {
     setBusy(true);
     try {
-      await bulkDeleteLeads(selectedIds);
+      await bulkDeleteLeads(selection);
       finish(`Deleted ${count} leads`);
       setConfirmDelete(false);
     } catch (err) {
@@ -179,7 +187,9 @@ export default function BulkActionBar({
         flexWrap: 'wrap',
       }}>
         <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--accent-primary)', whiteSpace: 'nowrap' }}>
-          {count} lead{count !== 1 ? 's' : ''} selected
+          {selectAll
+            ? `All ${count.toLocaleString()} leads selected`
+            : `${count} lead${count !== 1 ? 's' : ''} selected`}
         </span>
 
         <div style={{ width: 1, height: 24, background: 'var(--border-default)' }} />
@@ -212,10 +222,20 @@ export default function BulkActionBar({
             buttonStyle={buttonStyle}
             disabled={busy}
           />
-          <button style={buttonStyle} onClick={handleEnrich} disabled={busy}>
+          <button
+            style={buttonStyle}
+            onClick={handleEnrich}
+            disabled={busy || selectAll}
+            title={selectAll ? 'Disable Select All to enrich a specific set of leads' : ''}
+          >
             Enrich with Apollo
           </button>
-          <button style={buttonStyle} onClick={handleOpenCampaignPush} disabled={busy}>
+          <button
+            style={buttonStyle}
+            onClick={handleOpenCampaignPush}
+            disabled={busy || selectAll}
+            title={selectAll ? 'Disable Select All to push a specific set of leads' : ''}
+          >
             Push to Instantly
           </button>
           {isAdmin && (

@@ -417,15 +417,39 @@ router.delete('/:id', requireAdmin, async (req, res) => {
   }
 });
 
+// Translate the selectAll filter payload sent by the frontend into the
+// query-string shape that buildLeadsWhere() understands. Mirrors every
+// filter the lead table exposes so the SQL WHERE matches the Y count
+// displayed in the "Select all Y leads matching current filters" banner.
+function selectAllFiltersToQs(filters) {
+  if (!filters || typeof filters !== 'object') return {};
+  const qs = {};
+  if (filters.category !== undefined) qs.category = filters.category;
+  if (filters.stage !== undefined) qs.stage = filters.stage;
+  if (filters.priority !== undefined) qs.priority = filters.priority;
+  if (filters.emailStatus !== undefined) qs.email_status = filters.emailStatus;
+  if (filters.search !== undefined && filters.search !== '') qs.search = filters.search;
+  if (filters.scoreMin !== undefined && filters.scoreMin !== '' && filters.scoreMin !== null) qs.score_min = filters.scoreMin;
+  if (filters.scoreMax !== undefined && filters.scoreMax !== '' && filters.scoreMax !== null) qs.score_max = filters.scoreMax;
+  if (filters.attempts !== undefined && filters.attempts !== '') qs.attempts = filters.attempts;
+  return qs;
+}
+
 // POST /api/leads/bulk-update — apply the same field updates to many leads
-// at once. Body: { leadIds: number[], updates: { priority?, pipeline_stage?, category? } }
+// at once. Body shape (one of):
+//   { leadIds: number[], updates: {...} }
+//   { selectAll: true, filters: { category?, stage?, priority?, emailStatus?,
+//                                  search?, scoreMin?, scoreMax?, attempts? }, updates: {...} }
 const BULK_UPDATE_FIELDS = ['priority', 'pipeline_stage', 'category'];
 router.post('/bulk-update', async (req, res) => {
   try {
-    const leadIds = Array.isArray(req.body?.leadIds) ? req.body.leadIds.map(Number).filter(Number.isFinite) : [];
     const updates = req.body?.updates || {};
+    const useSelectAll = req.body?.selectAll === true;
+    const leadIds = Array.isArray(req.body?.leadIds)
+      ? req.body.leadIds.map(Number).filter(Number.isFinite)
+      : [];
 
-    if (leadIds.length === 0) {
+    if (!useSelectAll && leadIds.length === 0) {
       return res.status(400).json({ error: 'leadIds is required and must be non-empty' });
     }
 
@@ -447,43 +471,70 @@ router.post('/bulk-update', async (req, res) => {
     }
 
     setClauses.push('updated_at = NOW()');
-    const idsPlaceholder = `$${idx}`;
-    params.push(leadIds);
 
-    const { rowCount } = await query(
-      `UPDATE leads SET ${setClauses.join(', ')} WHERE id = ANY(${idsPlaceholder}::int[])`,
-      params
-    );
+    let sql;
+    let affectedIds;
+    if (useSelectAll) {
+      // Build the same WHERE clause used by GET /api/leads and apply the
+      // update to every matching row in a single statement. RETURNING id so
+      // we can re-score below if needed.
+      const where = buildLeadsWhere(selectAllFiltersToQs(req.body.filters), idx);
+      sql = `UPDATE leads SET ${setClauses.join(', ')} WHERE 1=1${where.sql} RETURNING id`;
+      params.push(...where.params);
+    } else {
+      const idsPlaceholder = `$${idx}`;
+      params.push(leadIds);
+      sql = `UPDATE leads SET ${setClauses.join(', ')} WHERE id = ANY(${idsPlaceholder}::int[]) RETURNING id`;
+    }
+
+    const result = await query(sql, params);
+    affectedIds = result.rows.map(r => r.id);
 
     // If category or pipeline_stage changed, re-score affected leads since
     // those are scoring inputs.
     const rescoreNeeded = updates.category !== undefined || updates.pipeline_stage !== undefined;
     if (rescoreNeeded) {
-      for (const id of leadIds) {
+      for (const id of affectedIds) {
         try { await scoreLead(id); } catch (e) { /* keep going */ }
       }
     }
 
-    res.json({ message: 'Bulk update complete', updated: rowCount });
+    res.json({ message: 'Bulk update complete', updated: result.rowCount });
   } catch (err) {
     res.status(500).json({ error: 'Bulk update failed', message: err.message });
   }
 });
 
-// POST /api/leads/bulk-delete — admin only. Body: { leadIds: number[] }
+// POST /api/leads/bulk-delete — admin only. Body shape (one of):
+//   { leadIds: number[] }
+//   { selectAll: true, filters: { category?, stage?, priority?, emailStatus?,
+//                                  search?, scoreMin?, scoreMax?, attempts? } }
 router.post('/bulk-delete', requireAdmin, async (req, res) => {
   try {
-    const leadIds = Array.isArray(req.body?.leadIds) ? req.body.leadIds.map(Number).filter(Number.isFinite) : [];
-    if (leadIds.length === 0) {
+    const useSelectAll = req.body?.selectAll === true;
+    const leadIds = Array.isArray(req.body?.leadIds)
+      ? req.body.leadIds.map(Number).filter(Number.isFinite)
+      : [];
+
+    if (!useSelectAll && leadIds.length === 0) {
       return res.status(400).json({ error: 'leadIds is required and must be non-empty' });
     }
 
-    const { rowCount } = await query(
-      'DELETE FROM leads WHERE id = ANY($1::int[])',
-      [leadIds]
-    );
+    let result;
+    if (useSelectAll) {
+      const where = buildLeadsWhere(selectAllFiltersToQs(req.body.filters), 1);
+      result = await query(
+        `DELETE FROM leads WHERE 1=1${where.sql}`,
+        where.params
+      );
+    } else {
+      result = await query(
+        'DELETE FROM leads WHERE id = ANY($1::int[])',
+        [leadIds]
+      );
+    }
 
-    res.json({ message: 'Bulk delete complete', deleted: rowCount });
+    res.json({ message: 'Bulk delete complete', deleted: result.rowCount });
   } catch (err) {
     res.status(500).json({ error: 'Bulk delete failed', message: err.message });
   }
