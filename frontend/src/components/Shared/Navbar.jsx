@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
-import { LayoutDashboard, BarChart3, Calendar, Mail, Globe, Settings, Megaphone, Phone, LogOut, KeyRound, Menu, X } from 'lucide-react'
+import { LayoutDashboard, BarChart3, Calendar, Mail, Globe, Settings, Megaphone, Phone, LogOut, KeyRound, Menu, X, FileAudio } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { changePassword } from '../../api'
 const tesseraIcon = '/logo-white.png'
@@ -9,6 +9,7 @@ import './Navbar.css'
 const allNavItems = [
   { path: '/', label: 'Pipeline', icon: LayoutDashboard },
   { path: '/analytics', label: 'Call Analytics', icon: BarChart3 },
+  { path: '/meetings', label: 'Meeting Notes', icon: FileAudio },
   { path: '/calendar', label: 'Calendar', icon: Calendar },
   { path: '/emails', label: 'Email Hub', icon: Mail },
   { path: '/scraper', label: 'Scraper Control', icon: Globe, adminOnly: true },

@@ -6,6 +6,7 @@ import OutreachPage from './pages/OutreachPage'
 import CallCenterPage from './pages/CallCenterPage'
 import CallAnalyticsPage from './pages/CallAnalyticsPage'
 import CalendarPage from './pages/CalendarPage'
+import MeetingNotesPage from './pages/MeetingNotesPage'
 import EmailHubPage from './pages/EmailHubPage'
 import ScraperPage from './pages/ScraperPage'
 import SettingsPage from './pages/SettingsPage'
@@ -51,6 +52,7 @@ function AppLayout() {
           <Route path="/outreach" element={<OutreachPage />} />
           <Route path="/calls" element={<CallCenterPage />} />
           <Route path="/analytics" element={<CallAnalyticsPage />} />
+          <Route path="/meetings" element={<MeetingNotesPage />} />
           <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/emails" element={<EmailHubPage />} />
           <Route path="/scraper" element={

@@ -7,6 +7,10 @@ const STAGES = [
   { key: 'contacted', label: 'Contacted', color: 'var(--stage-contacted)' },
   { key: 'interested', label: 'Interested', color: 'var(--stage-interested)' },
   { key: 'meeting_booked', label: 'Meeting Booked', color: 'var(--stage-meeting)' },
+  { key: 'technical_review', label: 'Technical Review', color: '#f97316' /* orange */ },
+  { key: 'contract_sent', label: 'Contract Sent', color: '#a855f7' /* purple */ },
+  { key: 'onboarding', label: 'Onboarding', color: '#6366f1' /* indigo */ },
+  { key: 'live', label: 'Live', color: '#22c55e' /* green */ },
   { key: 'closed', label: 'Closed', color: 'var(--stage-closed)' },
   { key: 'dead', label: 'Dead', color: 'var(--stage-dead)' },
 ];

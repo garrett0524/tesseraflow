@@ -166,7 +166,13 @@ router.put('/:id', async (req, res) => {
       'owner_name', 'pipeline_stage', 'lead_score', 'contact_attempts',
       'last_contact_date', 'last_contact_method', 'notes',
       'email', 'contact_name', 'contact_title', 'direct_phone', 'apollo_id',
-      'enriched_at', 'email_status', 'instantly_campaign_id', 'last_email_at'
+      'enriched_at', 'email_status', 'instantly_campaign_id', 'last_email_at',
+      'country', 'company_size', 'linkedin_url',
+      // MSP/ISP fields
+      'estimated_locations', 'hardware_vendors', 'manages_wifi',
+      'geographic_reach', 'discovery_score', 'compatible_hardware',
+      'deployment_timeline', 'auto_score', 'responded_to_outreach',
+      'decision_maker_engaged',
     ];
 
     const updates = [];
@@ -197,6 +203,22 @@ router.put('/:id', async (req, res) => {
         await autoCreateCalendarFromStageChange(Number(req.params.id), lead, newStage, req.body.notes || lead.notes);
       } catch (calErr) {
         console.error('Calendar auto-creation from stage change failed:', calErr.message);
+      }
+    }
+
+    // Re-score whenever any scoring inputs changed (auto OR discovery side)
+    const scoringFields = [
+      'category', 'email', 'website', 'company_size',
+      'estimated_locations', 'compatible_hardware', 'manages_wifi',
+      'deployment_timeline', 'responded_to_outreach', 'decision_maker_engaged',
+      'discovery_score', 'pipeline_stage',
+    ];
+    const touchedScoring = scoringFields.some(f => req.body[f] !== undefined);
+    if (touchedScoring) {
+      try {
+        await scoreLead(Number(req.params.id));
+      } catch (e) {
+        console.error('Auto-rescore on update failed:', e.message);
       }
     }
 
@@ -246,25 +268,65 @@ router.post('/import', requireAdmin, upload.single('file'), async (req, res) => 
       try {
         const row = records[i];
 
-        // Support both TesseraFlow and Apollo CSV column names
+        // Support both TesseraFlow and Apollo CSV column names.
+        // Apollo exports with capitalized headers like "Company Name"; the parser
+        // keeps both the original-case key and a normalized lowercase form.
+        const pick = (...keys) => {
+          for (const k of keys) {
+            const v = row[k];
+            if (v !== undefined && v !== null && v !== '') return v;
+          }
+          return null;
+        };
+
+        const firstName = pick('First Name', 'first_name', 'firstname');
+        const lastName = pick('Last Name', 'last_name', 'lastname');
+        const combinedName = (firstName || lastName)
+          ? `${firstName || ''} ${lastName || ''}`.trim()
+          : null;
+
+        const technologies = pick('Technologies', 'technologies');
+        const baseNotes = pick('notes', 'Notes');
+        const noteParts = [];
+        if (baseNotes) noteParts.push(baseNotes);
+        if (technologies) noteParts.push(`Technologies: ${technologies}`);
+
         const lead = {
-          business_name: row.business_name || row.name || row.businessname || row.name_for_emails || row.company || row.company_name || null,
-          category: row.category || row.type || row.subtypes || null,
-          address: row.address || row.full_address || row.street || null,
-          city: row.city || row.town || null,
-          state: row.state || row.state_code || 'NY',
-          zip: row.zip || row.zipcode || row.postal || row.postal_code || null,
-          phone: row.phone || row.phone_number || row.corporate_phone || null,
-          website: row.website || row.url || row.company_website || null,
-          google_rating: parseFloat(row.google_rating || row.rating) || null,
-          review_count: parseInt(row.review_count || row.reviews, 10) || 0,
-          place_id: row.place_id || row.placeid || null,
-          owner_name: row.owner_name || row.owner || row.contact || row.owner_title || null,
-          // Apollo-specific fields
-          email: row.email || row.email_address || null,
-          contact_name: row.contact_name || (row.first_name && row.last_name ? `${row.first_name} ${row.last_name}`.trim() : null) || row.name || null,
-          contact_title: row.contact_title || row.title || null,
-          direct_phone: row.direct_phone || row.mobile_phone || row.personal_phone || null,
+          business_name: pick(
+            'Company Name', 'Company Name for Emails',
+            'business_name', 'name', 'businessname', 'name_for_emails',
+            'company', 'company_name', 'companyname', 'companynameforemails'
+          ),
+          category: pick('Industry', 'industry', 'category', 'type', 'subtypes'),
+          address: pick('Company Address', 'address', 'full_address', 'street', 'companyaddress'),
+          city: pick('Company City', 'city', 'town', 'companycity'),
+          state: pick('Company State', 'state', 'state_code', 'companystate') || 'NY',
+          zip: pick('zip', 'zipcode', 'postal', 'postal_code'),
+          country: pick('Company Country', 'country', 'companycountry'),
+          phone: pick(
+            'Company Phone', 'Corporate Phone',
+            'phone', 'phone_number', 'corporate_phone',
+            'companyphone', 'corporatephone'
+          ),
+          direct_phone: pick(
+            'Work Direct Phone', 'Mobile Phone',
+            'direct_phone', 'mobile_phone', 'personal_phone',
+            'workdirectphone', 'mobilephone'
+          ),
+          website: pick('Website', 'website', 'url', 'company_website'),
+          google_rating: parseFloat(pick('google_rating', 'rating')) || null,
+          review_count: parseInt(pick('review_count', 'reviews'), 10) || 0,
+          place_id: pick('place_id', 'placeid'),
+          owner_name: pick('owner_name', 'owner', 'contact', 'owner_title'),
+          email: pick('Email', 'email', 'email_address'),
+          contact_name: pick('contact_name', 'name') || combinedName,
+          contact_title: pick('Title', 'contact_title', 'title'),
+          company_size: mapEmployeeCount(pick('# Employees', 'employees', 'company_size')),
+          linkedin_url: pick(
+            'Person Linkedin Url', 'Person LinkedIn Url',
+            'personlinkedinurl', 'person_linkedin_url', 'linkedin_url'
+          ),
+          notes: noteParts.length > 0 ? noteParts.join('\n') : null,
         };
 
         if (!lead.business_name) {
@@ -302,6 +364,14 @@ router.post('/import', requireAdmin, upload.single('file'), async (req, res) => 
           if (lead.contact_title) { updateFields.push(`contact_title = $${pIdx++}`); updateParams.push(lead.contact_title); }
           if (lead.direct_phone) { updateFields.push(`direct_phone = $${pIdx++}`); updateParams.push(lead.direct_phone); }
           if (lead.phone && !lead.direct_phone) { updateFields.push(`phone = $${pIdx++}`); updateParams.push(lead.phone); }
+          if (lead.country) { updateFields.push(`country = $${pIdx++}`); updateParams.push(lead.country); }
+          if (lead.company_size) { updateFields.push(`company_size = $${pIdx++}`); updateParams.push(lead.company_size); }
+          if (lead.linkedin_url) { updateFields.push(`linkedin_url = $${pIdx++}`); updateParams.push(lead.linkedin_url); }
+          if (lead.notes) {
+            updateFields.push(`notes = CASE WHEN notes IS NULL OR notes = '' THEN $${pIdx} ELSE notes || E'\\n' || $${pIdx} END`);
+            updateParams.push(lead.notes);
+            pIdx++;
+          }
           if (updateFields.length > 0) {
             updateFields.push('updated_at = NOW()');
             updateParams.push(existingId);
@@ -314,16 +384,18 @@ router.post('/import', requireAdmin, upload.single('file'), async (req, res) => 
         }
 
         const { rows: [inserted] } = await query(
-          `INSERT INTO leads (business_name, category, address, city, state, zip,
+          `INSERT INTO leads (business_name, category, address, city, state, zip, country,
             phone, website, google_rating, review_count, place_id, owner_name,
-            email, contact_name, contact_title, direct_phone)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            email, contact_name, contact_title, direct_phone,
+            company_size, linkedin_url, notes)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
            RETURNING id`,
           [
             lead.business_name, lead.category, lead.address, lead.city,
-            lead.state, lead.zip, lead.phone, lead.website,
+            lead.state, lead.zip, lead.country, lead.phone, lead.website,
             lead.google_rating, lead.review_count, lead.place_id, lead.owner_name,
-            lead.email, lead.contact_name, lead.contact_title, lead.direct_phone
+            lead.email, lead.contact_name, lead.contact_title, lead.direct_phone,
+            lead.company_size, lead.linkedin_url, lead.notes
           ]
         );
 
@@ -364,6 +436,7 @@ router.get('/export/csv', async (req, res) => {
       'owner_name', 'pipeline_stage', 'lead_score', 'contact_attempts',
       'last_contact_date', 'last_contact_method', 'notes',
       'email', 'contact_name', 'contact_title', 'direct_phone', 'email_status',
+      'country', 'company_size', 'linkedin_url',
       'created_at'
     ];
 
@@ -461,6 +534,23 @@ function formatDate(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+function mapEmployeeCount(raw) {
+  if (raw === null || raw === undefined || raw === '') return null;
+  const str = String(raw).trim();
+  // Pass through values that already look like a range (e.g. "51-200", "10001+")
+  if (/^\d+\s*[-+]/.test(str) || /[a-z]/i.test(str)) return str;
+  const n = parseInt(str.replace(/[^0-9]/g, ''), 10);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  if (n <= 10) return '1-10';
+  if (n <= 50) return '11-50';
+  if (n <= 200) return '51-200';
+  if (n <= 500) return '201-500';
+  if (n <= 1000) return '501-1000';
+  if (n <= 5000) return '1001-5000';
+  if (n <= 10000) return '5001-10000';
+  return '10001+';
+}
+
 /**
  * RFC 4180-compliant CSV parser
  */
@@ -519,7 +609,14 @@ function parseCSV(text) {
     return fields;
   }
 
-  const headers = parseRow().map(h => h.trim().toLowerCase().replace(/[^a-z0-9_]/g, ''));
+  const rawHeaders = parseRow();
+  const headers = rawHeaders.map(h => {
+    const original = h.trim();
+    return {
+      original,
+      normalized: original.toLowerCase().replace(/[^a-z0-9_]/g, ''),
+    };
+  });
 
   while (i < len) {
     if (text[i] === '\n' || text[i] === '\r') {
@@ -531,8 +628,12 @@ function parseCSV(text) {
     if (values.length === 0 || (values.length === 1 && values[0] === '')) continue;
 
     const obj = {};
-    headers.forEach((header, idx) => {
-      obj[header] = (idx < values.length && values[idx] !== '') ? values[idx] : null;
+    headers.forEach(({ original, normalized }, idx) => {
+      const val = (idx < values.length && values[idx] !== '') ? values[idx] : null;
+      obj[normalized] = val;
+      if (original && original !== normalized) {
+        obj[original] = val;
+      }
     });
     rows.push(obj);
   }

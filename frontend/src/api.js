@@ -294,3 +294,38 @@ export const pushFilteredToInstantly = (filter, campaignId) => fetchApi('/instan
 });
 
 export const syncInstantlyStatuses = () => fetchApi('/instantly/sync', { method: 'POST' });
+
+// ============================================================
+// Meeting Recordings (uploaded Zoom / Google Meet calls)
+// ============================================================
+export const getMeetings = () => fetchApi('/meetings');
+
+export const getMeeting = (id) => fetchApi(`/meetings/${id}`);
+
+export const uploadMeeting = async (leadId, file) => {
+  const formData = new FormData();
+  if (leadId) formData.append('lead_id', leadId);
+  formData.append('audio', file, file.name);
+  const response = await fetch(`${API_BASE}/meetings/upload`, {
+    method: 'POST',
+    body: formData,
+    credentials: 'include',
+  });
+  if (response.status === 401) {
+    window.location.href = '/login';
+    throw new Error('Authentication required');
+  }
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || 'Upload failed');
+  }
+  return response.json();
+};
+
+export const applyMeetingSuggestions = (id, { apply_stage = false, apply_notes = false } = {}) =>
+  fetchApi(`/meetings/${id}/apply`, {
+    method: 'POST',
+    body: JSON.stringify({ apply_stage, apply_notes }),
+  });
+
+export const deleteMeeting = (id) => fetchApi(`/meetings/${id}`, { method: 'DELETE' });

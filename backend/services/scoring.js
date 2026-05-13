@@ -1,79 +1,124 @@
 /**
  * TesseraFlow Lead Scoring Engine
  *
- * Score range: 0-100
- * Scoring factors from spec:
- *   Category Match:    0-20 pts
- *   Google Rating:     0-15 pts
- *   Review Count:      0-15 pts
- *   Has Phone Number:  0-10 pts
- *   Has Website:       0-10 pts
- *   Owner Name Found:  0-10 pts
- *   Engagement:        0-20 pts
+ * Two-phase scoring (0-100 total):
+ *   auto_score      (0-50) — derived automatically from lead data
+ *   discovery_score (0-50) — set manually after a discovery call/meeting
+ *
+ * For MSP/ISP/IT/WISP categories, auto_score follows the MSP rubric.
+ * For everything else (restaurants, bars, gyms) the legacy rubric runs
+ * and is capped at 50 so the cumulative range stays 0-100.
  */
 
 const { query } = require('../database/pg');
 
-function calculateScore(lead, engagement = {}) {
-  let score = 0;
+const MSP_CATEGORY_KEYWORDS = ['msp', 'isp', 'wisp', 'it service', 'managed service', 'managed it'];
 
-  if (lead.category) {
-    const cat = lead.category.toLowerCase();
-    if (cat.includes('bar') || cat.includes('restaurant') || cat.includes('pub') ||
-        cat.includes('tavern') || cat.includes('grill') || cat.includes('sports bar')) {
-      score += 20;
-    } else if (cat.includes('gym') || cat.includes('fitness') || cat.includes('crossfit') ||
-               cat.includes('yoga') || cat.includes('martial')) {
-      score += 20;
-    } else {
-      score += 10;
-    }
-  }
-
-  if (lead.google_rating) {
-    if (lead.google_rating >= 4.5) score += 15;
-    else if (lead.google_rating >= 4.0) score += 10;
-    else if (lead.google_rating >= 3.5) score += 5;
-  }
-
-  if (lead.review_count) {
-    if (lead.review_count >= 100) score += 15;
-    else if (lead.review_count >= 50) score += 10;
-    else if (lead.review_count >= 20) score += 5;
-  }
-
-  if (lead.phone && lead.phone.trim() !== '') {
-    score += 10;
-  }
-
-  if (lead.website && lead.website.trim() !== '') {
-    score += 10;
-  }
-
-  if (lead.owner_name && lead.owner_name.trim() !== '') {
-    score += 10;
-  }
-
-  return Math.min(100, score);
+function isMspCategory(category) {
+  if (!category) return false;
+  const cat = String(category).toLowerCase();
+  return MSP_CATEGORY_KEYWORDS.some(k => cat.includes(k));
 }
 
-function calculateEngagement(engagement) {
-  let maxEngagement = 0;
+function parseCompanySize(raw) {
+  if (raw === null || raw === undefined || raw === '') return 0;
+  const str = String(raw).trim();
+  // Handle ranges like "51-200", "200+", "1-10"
+  const rangeMatch = str.match(/^(\d+)\s*-\s*(\d+)/);
+  if (rangeMatch) return parseInt(rangeMatch[2], 10);
+  const plusMatch = str.match(/^(\d+)\s*\+/);
+  if (plusMatch) return parseInt(plusMatch[1], 10);
+  const n = parseInt(str.replace(/[^0-9]/g, ''), 10);
+  return Number.isFinite(n) ? n : 0;
+}
 
-  if (engagement.callback_requested) {
-    maxEngagement = Math.max(maxEngagement, 20);
-  }
-  if (engagement.email_replied) {
-    maxEngagement = Math.max(maxEngagement, 10);
-  }
-  if (engagement.call_answered) {
-    maxEngagement = Math.max(maxEngagement, 10);
-  }
-  if (engagement.email_opened) {
-    maxEngagement = Math.max(maxEngagement, 5);
+function isNearTermTimeline(timeline) {
+  if (!timeline) return false;
+  const t = String(timeline).toLowerCase();
+  return t.includes('immediate') || t.includes('30');
+}
+
+/**
+ * Phase 1: auto_score (0-50)
+ * MSP rubric: has email (10), has website (5), company size 51+ (10),
+ *             category MSP/ISP (10), responded to outreach (15)
+ * Legacy rubric (non-MSP): existing scoring, capped at 50.
+ */
+function calculateAutoScore(lead, engagement = {}) {
+  if (isMspCategory(lead.category)) {
+    let score = 0;
+    if (lead.email && String(lead.email).trim() !== '') score += 10;
+    if (lead.website && String(lead.website).trim() !== '') score += 5;
+    if (parseCompanySize(lead.company_size) >= 51) score += 10;
+    score += 10; // category is MSP/ISP
+    if (lead.responded_to_outreach || engagement.email_replied || engagement.callback_requested) {
+      score += 15;
+    }
+    return Math.min(50, score);
   }
 
-  return maxEngagement;
+  // Legacy (restaurant/bar/gym/etc) — capped at 50
+  let score = 0;
+  if (lead.category) {
+    const cat = String(lead.category).toLowerCase();
+    if (cat.includes('bar') || cat.includes('restaurant') || cat.includes('pub') ||
+        cat.includes('tavern') || cat.includes('grill') || cat.includes('sports bar')) {
+      score += 15;
+    } else if (cat.includes('gym') || cat.includes('fitness') || cat.includes('crossfit') ||
+               cat.includes('yoga') || cat.includes('martial')) {
+      score += 15;
+    } else {
+      score += 5;
+    }
+  }
+  if (lead.google_rating) {
+    if (lead.google_rating >= 4.5) score += 10;
+    else if (lead.google_rating >= 4.0) score += 7;
+    else if (lead.google_rating >= 3.5) score += 3;
+  }
+  if (lead.review_count) {
+    if (lead.review_count >= 100) score += 10;
+    else if (lead.review_count >= 50) score += 6;
+    else if (lead.review_count >= 20) score += 3;
+  }
+  if (lead.phone && String(lead.phone).trim() !== '') score += 5;
+  if (lead.website && String(lead.website).trim() !== '') score += 5;
+  if (lead.owner_name && String(lead.owner_name).trim() !== '') score += 5;
+  if (engagement.callback_requested) score += 10;
+  else if (engagement.email_replied) score += 7;
+  else if (engagement.call_answered) score += 5;
+  else if (engagement.email_opened) score += 2;
+
+  return Math.min(50, score);
+}
+
+/**
+ * Phase 2: discovery_score (0-50)
+ * 50+ locations (15), compatible hardware (10), manages Wi-Fi (10),
+ * decision maker engaged (10), near-term timeline (5).
+ *
+ * Returns the auto-calculated value. The DB column may have been
+ * manually overridden — callers decide whether to overwrite.
+ */
+function calculateDiscoveryScore(lead) {
+  let score = 0;
+  if ((lead.estimated_locations || 0) >= 50) score += 15;
+  if (lead.compatible_hardware) score += 10;
+  if (lead.manages_wifi) score += 10;
+  if (lead.decision_maker_engaged) score += 10;
+  if (isNearTermTimeline(lead.deployment_timeline)) score += 5;
+  return Math.min(50, score);
+}
+
+/**
+ * Back-compat shim: callers may still pass calculateScore expecting 0-100.
+ */
+function calculateScore(lead, engagement = {}) {
+  const auto = calculateAutoScore(lead, engagement);
+  const discovery = (lead.discovery_score !== null && lead.discovery_score !== undefined)
+    ? Number(lead.discovery_score) || 0
+    : calculateDiscoveryScore(lead);
+  return Math.min(100, auto + discovery);
 }
 
 async function scoreLead(leadId) {
@@ -92,11 +137,24 @@ async function scoreLead(leadId) {
     email_opened: parseInt(emailOpenedResult?.count || 0) > 0,
   };
 
-  const score = calculateScore(lead, engagement);
+  const autoScore = calculateAutoScore(lead, engagement);
 
-  await query("UPDATE leads SET lead_score = $1, updated_at = NOW() WHERE id = $2", [score, leadId]);
+  // discovery_score is manually authoritative if set above zero; otherwise
+  // compute from current data.
+  const storedDiscovery = lead.discovery_score === null || lead.discovery_score === undefined
+    ? null
+    : Number(lead.discovery_score);
+  const computedDiscovery = calculateDiscoveryScore(lead);
+  const discoveryScore = storedDiscovery && storedDiscovery > 0 ? storedDiscovery : computedDiscovery;
 
-  return score;
+  const total = Math.min(100, autoScore + discoveryScore);
+
+  await query(
+    "UPDATE leads SET auto_score = $1, discovery_score = $2, lead_score = $3, updated_at = NOW() WHERE id = $4",
+    [autoScore, discoveryScore, total, leadId]
+  );
+
+  return total;
 }
 
 async function scoreAllLeads() {
@@ -113,6 +171,9 @@ async function scoreAllLeads() {
 
 module.exports = {
   calculateScore,
+  calculateAutoScore,
+  calculateDiscoveryScore,
   scoreLead,
-  scoreAllLeads
+  scoreAllLeads,
+  isMspCategory,
 };

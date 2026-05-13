@@ -479,13 +479,25 @@ function AddLeadModal({ onClose, onSave }) {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)' }}>
               <div>
                 <label style={labelStyle}>Category</label>
-                <input
-                  type="text"
+                <select
                   value={form.category}
                   onChange={(e) => handleChange('category', e.target.value)}
-                  placeholder="e.g. Restaurant"
                   style={fieldStyle}
-                />
+                >
+                  <option value="">Select category...</option>
+                  <optgroup label="Hospitality / Fitness">
+                    <option value="Restaurant">Restaurant</option>
+                    <option value="Bar">Bar</option>
+                    <option value="Gym">Gym</option>
+                    <option value="Fitness Center">Fitness Center</option>
+                  </optgroup>
+                  <optgroup label="MSP / Network">
+                    <option value="MSP">MSP</option>
+                    <option value="ISP">ISP</option>
+                    <option value="IT Services">IT Services</option>
+                    <option value="WISP">WISP</option>
+                  </optgroup>
+                </select>
               </div>
               <div>
                 <label style={labelStyle}>Owner Name</label>
@@ -576,7 +588,12 @@ function AddLeadModal({ onClose, onSave }) {
                 <option value="contacted">Contacted</option>
                 <option value="interested">Interested</option>
                 <option value="meeting_booked">Meeting Booked</option>
+                <option value="technical_review">Technical Review</option>
+                <option value="contract_sent">Contract Sent</option>
+                <option value="onboarding">Onboarding</option>
+                <option value="live">Live</option>
                 <option value="closed">Closed</option>
+                <option value="dead">Dead</option>
               </select>
             </div>
 

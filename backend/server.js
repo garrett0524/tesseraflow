@@ -5,6 +5,7 @@ const cors = require('cors');
 const path = require('path');
 const cookieParser = require('cookie-parser');
 const { requireAuth, requireAdmin } = require('./middleware/auth');
+const { runMigrations } = require('./database/migrations');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -52,6 +53,7 @@ const scraperRouter = require('./routes/scraper');
 const statsRouter = require('./routes/stats');
 const settingsRouter = require('./routes/settings');
 const recordingsRouter = require('./routes/recordings');
+const meetingsRouter = require('./routes/meetings');
 const calendarRouter = require('./routes/calendar');
 const usersRouter = require('./routes/users');
 const apolloRouter = require('./routes/apollo');
@@ -66,6 +68,7 @@ app.use('/api/scraper', requireAdmin, scraperRouter);
 app.use('/api/stats', statsRouter);
 app.use('/api/settings', requireAdmin, settingsRouter);
 app.use('/api/recordings', recordingsRouter);
+app.use('/api/meetings', meetingsRouter);
 app.use('/api/calendar', calendarRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/apollo', apolloRouter);
@@ -92,10 +95,19 @@ app.use((req, res) => {
   res.status(404).json({ error: 'Not found', path: req.path });
 });
 
-// Start server (no more SQLite init needed — PostgreSQL connects on demand via pool)
-app.listen(PORT, () => {
-  console.log(`TesseraFlow API running on http://localhost:${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-});
+// Start server. Run runtime migrations first so the schema is up to date
+// before any requests are served.
+(async () => {
+  try {
+    await runMigrations();
+  } catch (err) {
+    console.error('Migrations failed:', err.message);
+  }
+
+  app.listen(PORT, () => {
+    console.log(`TesseraFlow API running on http://localhost:${PORT}`);
+    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  });
+})();
 
 module.exports = app;

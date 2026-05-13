@@ -184,7 +184,72 @@ ${callSummaries}`;
   return extractJSON(textContent.text);
 }
 
+/**
+ * MSP-tuned meeting analysis.
+ *
+ * The transcript comes from a recorded Google Meet / Zoom call (uploaded,
+ * not live). Garrett sells Tessera / managed Wi-Fi infrastructure to MSPs
+ * and ISPs, so we extract MSP-specific signals.
+ */
+async function analyzeMeetingTranscript(transcript) {
+  const apiKey = await getApiKey();
+  if (!apiKey) {
+    throw new Error('Anthropic API key not configured. Add it in Settings.');
+  }
+
+  const prompt = `You are analyzing a recorded discovery / sales meeting between Garrett (selling managed Wi-Fi / network infrastructure services to MSPs and ISPs) and a prospect from an MSP, ISP, IT services, or WISP company. The transcript may include speaker labels.
+Return ONLY valid JSON, no markdown, no code fences.
+
+{
+  "summary": "3-5 sentence summary of the meeting",
+  "outcome": "interested | not_interested | follow_up | proposal_requested | closed_won | closed_lost | no_decision",
+  "locations_discussed": "Number or description of locations / client sites the MSP manages, if mentioned",
+  "hardware_mentioned": "Comma-separated hardware vendors / brands mentioned (e.g. Ubiquiti, Cisco, Aruba). Empty string if none.",
+  "interest_level": 1,
+  "concerns": ["List of specific concerns or objections raised"],
+  "next_steps": ["Concrete next actions agreed to in the meeting"],
+  "timeline_discussed": "Deployment timeline: Immediate | 30 days | 60 days | 90+ | TBD — based on what was discussed",
+  "deal_potential": "high | medium | low — qualitative assessment based on fit, urgency, and engagement",
+  "suggested_stage": "new | contacted | interested | meeting_booked | technical_review | contract_sent | onboarding | live | closed | dead",
+  "suggested_notes": "Notes to append to the lead record summarizing key takeaways"
+}
+
+The "interest_level" must be an integer from 1 (no interest) to 10 (highly engaged, ready to move forward).
+
+TRANSCRIPT:
+${transcript}`;
+
+  const modelId = await getModelId();
+
+  const response = await fetch(ANTHROPIC_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify({
+      model: modelId,
+      max_tokens: 2000,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`Anthropic API error (${response.status}): ${errorBody}`);
+  }
+
+  const data = await response.json();
+  const textContent = data.content.find(c => c.type === 'text');
+  if (!textContent) throw new Error('No text content in Anthropic API response');
+
+  return extractJSON(textContent.text);
+}
+
 module.exports = {
   analyzeTranscript,
-  generateCoachingReport
+  generateCoachingReport,
+  analyzeMeetingTranscript,
 };

@@ -255,6 +255,10 @@ select { cursor: pointer; }
 .badge-contacted { background: rgba(96,165,250,0.1); color: #60a5fa; }
 .badge-interested { background: rgba(251,191,36,0.1); color: #fbbf24; }
 .badge-meeting_booked { background: rgba(52,211,153,0.1); color: #34d399; }
+.badge-technical_review { background: rgba(249,115,22,0.12); color: #f97316; }
+.badge-contract_sent { background: rgba(168,85,247,0.12); color: #a855f7; }
+.badge-onboarding { background: rgba(99,102,241,0.12); color: #818cf8; }
+.badge-live { background: rgba(34,197,94,0.12); color: #22c55e; }
 .badge-closed { background: rgba(167,139,250,0.1); color: #a78bfa; }
 .badge-dead { background: rgba(248,113,113,0.1); color: #f87171; }
 

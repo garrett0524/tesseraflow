@@ -7,9 +7,18 @@ const STAGE_LABELS = {
   contacted: 'Contacted',
   interested: 'Interested',
   meeting_booked: 'Meeting Booked',
+  technical_review: 'Technical Review',
+  contract_sent: 'Contract Sent',
+  onboarding: 'Onboarding',
+  live: 'Live',
   closed: 'Closed',
   dead: 'Dead',
 };
+
+const KNOWN_CATEGORIES = [
+  'Restaurant', 'Bar', 'Gym', 'Fitness Center',
+  'MSP', 'ISP', 'IT Services', 'WISP',
+];
 
 const EMAIL_STATUS_DOT = {
   none: '#6b7280',
@@ -70,6 +79,7 @@ export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDi
 
   const categories = useMemo(() => {
     const cats = new Set(leads.map(l => l.category).filter(Boolean));
+    for (const c of KNOWN_CATEGORIES) cats.add(c);
     return [...cats].sort();
   }, [leads]);
 
@@ -196,6 +206,8 @@ export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDi
                 <th>Phone</th>
                 <th>Owner</th>
                 <th>Email</th>
+                <th onClick={() => handleSort('estimated_locations')}>Locations <SortIcon field="estimated_locations" /></th>
+                <th>Hardware</th>
                 <th onClick={() => handleSort('pipeline_stage')}>Stage <SortIcon field="pipeline_stage" /></th>
                 <th onClick={() => handleSort('last_contact_date')}>Last Contact <SortIcon field="last_contact_date" /></th>
                 <th onClick={() => handleSort('contact_attempts')}>Attempts <SortIcon field="contact_attempts" /></th>
@@ -206,7 +218,7 @@ export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDi
             <tbody>
               {filteredLeads.length === 0 ? (
                 <tr>
-                  <td colSpan={11} style={{ textAlign: 'center', color: 'var(--text-tertiary)', padding: 'var(--space-3xl)' }}>
+                  <td colSpan={13} style={{ textAlign: 'center', color: 'var(--text-tertiary)', padding: 'var(--space-3xl)' }}>
                     {leads.length === 0 ? 'No leads yet — run a scrape or import CSV' : 'No leads match filters'}
                   </td>
                 </tr>
@@ -247,6 +259,12 @@ export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDi
                           {enrichingId === lead.id ? 'Enriching...' : 'Enrich'}
                         </button>
                       )}
+                    </td>
+                    <td style={{ textAlign: 'center', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                      {lead.estimated_locations != null && lead.estimated_locations !== '' ? lead.estimated_locations : '-'}
+                    </td>
+                    <td style={{ maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                      {lead.hardware_vendors || '-'}
                     </td>
                     <td>
                       <span className={`badge badge-${lead.pipeline_stage}`}>

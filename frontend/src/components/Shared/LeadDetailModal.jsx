@@ -18,9 +18,26 @@ const STAGES = [
   { key: 'contacted', label: 'Contacted' },
   { key: 'interested', label: 'Interested' },
   { key: 'meeting_booked', label: 'Meeting Booked' },
+  { key: 'technical_review', label: 'Technical Review' },
+  { key: 'contract_sent', label: 'Contract Sent' },
+  { key: 'onboarding', label: 'Onboarding' },
+  { key: 'live', label: 'Live' },
   { key: 'closed', label: 'Closed' },
   { key: 'dead', label: 'Dead' },
 ];
+
+const MSP_CATEGORIES = new Set(['MSP', 'ISP', 'IT Services', 'WISP']);
+function isMspLead(category) {
+  if (!category) return false;
+  const cat = String(category).toLowerCase();
+  if (MSP_CATEGORIES.has(category)) return true;
+  return cat.includes('msp') || cat.includes('isp') || cat.includes('wisp')
+    || cat.includes('it service') || cat.includes('managed service') || cat.includes('managed it');
+}
+
+const GEOGRAPHIC_REACH_OPTIONS = ['Local', 'Regional', 'Multi-State', 'National'];
+const COMPANY_SIZE_OPTIONS = ['1-10', '11-50', '51-200', '200+'];
+const DEPLOYMENT_TIMELINE_OPTIONS = ['Immediate', '30 days', '60 days', '90+', 'TBD'];
 
 const TABS = [
   { key: 'details', label: 'Details' },
@@ -69,6 +86,34 @@ export default function LeadDetailModal({ lead: initialLead, onClose, onSave }) 
   const [contactName, setContactName] = useState(lead.contact_name || '');
   const [contactTitle, setContactTitle] = useState(lead.contact_title || '');
   const [directPhone, setDirectPhone] = useState(lead.direct_phone || '');
+
+  // MSP profile state
+  const [estimatedLocations, setEstimatedLocations] = useState(lead.estimated_locations ?? '');
+  const [hardwareVendors, setHardwareVendors] = useState(lead.hardware_vendors || '');
+  const [managesWifi, setManagesWifi] = useState(!!lead.manages_wifi);
+  const [geographicReach, setGeographicReach] = useState(lead.geographic_reach || '');
+  const [companySize, setCompanySize] = useState(lead.company_size || '');
+
+  // Post-discovery state
+  const [compatibleHardware, setCompatibleHardware] = useState(!!lead.compatible_hardware);
+  const [deploymentTimeline, setDeploymentTimeline] = useState(lead.deployment_timeline || '');
+  const [discoveryScore, setDiscoveryScore] = useState(lead.discovery_score ?? 0);
+  const [discoveryScoreManuallySet, setDiscoveryScoreManuallySet] = useState(false);
+
+  // Auto-recompute discovery score based on toggles, unless the user
+  // has manually overridden it.
+  useEffect(() => {
+    if (discoveryScoreManuallySet) return;
+    let s = 0;
+    if (Number(estimatedLocations) >= 50) s += 15;
+    if (compatibleHardware) s += 10;
+    if (managesWifi) s += 10;
+    if ((deploymentTimeline || '').toLowerCase().includes('immediate')
+        || (deploymentTimeline || '').includes('30')) s += 5;
+    setDiscoveryScore(Math.min(50, s));
+  }, [estimatedLocations, compatibleHardware, managesWifi, deploymentTimeline, discoveryScoreManuallySet]);
+
+  const showMsp = isMspLead(category);
 
   // Apollo enrichment state
   const [enriching, setEnriching] = useState(false);
@@ -201,6 +246,16 @@ export default function LeadDetailModal({ lead: initialLead, onClose, onSave }) 
       contact_name: contactName,
       contact_title: contactTitle,
       direct_phone: directPhone,
+      // MSP profile
+      estimated_locations: estimatedLocations === '' ? null : Number(estimatedLocations),
+      hardware_vendors: hardwareVendors || null,
+      manages_wifi: !!managesWifi,
+      geographic_reach: geographicReach || null,
+      company_size: companySize || null,
+      // Post-discovery
+      compatible_hardware: !!compatibleHardware,
+      deployment_timeline: deploymentTimeline || null,
+      discovery_score: Number(discoveryScore) || 0,
     });
     setSaving(false);
   };
@@ -468,7 +523,24 @@ export default function LeadDetailModal({ lead: initialLead, onClose, onSave }) 
               </div>
               <div>
                 <label style={labelStyle}>Category</label>
-                <input type="text" value={category} onChange={e => setCategory(e.target.value)} placeholder="e.g. Restaurant, Bar, Gym" style={inputStyle} />
+                <input
+                  list="lead-categories"
+                  type="text"
+                  value={category}
+                  onChange={e => setCategory(e.target.value)}
+                  placeholder="e.g. Restaurant, MSP, ISP"
+                  style={inputStyle}
+                />
+                <datalist id="lead-categories">
+                  <option value="Restaurant" />
+                  <option value="Bar" />
+                  <option value="Gym" />
+                  <option value="Fitness Center" />
+                  <option value="MSP" />
+                  <option value="ISP" />
+                  <option value="IT Services" />
+                  <option value="WISP" />
+                </datalist>
               </div>
               <div>
                 <label style={labelStyle}>Owner / Manager</label>
@@ -651,6 +723,152 @@ export default function LeadDetailModal({ lead: initialLead, onClose, onSave }) 
                 </div>
               )}
             </div>
+
+            {/* MSP Profile + Post-Discovery (only for MSP/ISP/IT/WISP leads) */}
+            {showMsp && (
+              <>
+                <div style={{
+                  marginBottom: 'var(--space-xl)',
+                  padding: 'var(--space-lg)',
+                  background: 'var(--bg-tertiary)',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--border-default)',
+                }}>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 'var(--space-md)' }}>
+                    MSP Profile
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 'var(--space-md)' }}>
+                    <div>
+                      <label style={labelStyle}>Estimated Locations Managed</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={estimatedLocations}
+                        onChange={e => setEstimatedLocations(e.target.value)}
+                        placeholder="e.g. 25"
+                        style={inputStyle}
+                      />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Hardware Vendors</label>
+                      <input
+                        type="text"
+                        value={hardwareVendors}
+                        onChange={e => setHardwareVendors(e.target.value)}
+                        placeholder="Ubiquiti, Cisco, Aruba"
+                        style={inputStyle}
+                      />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Geographic Reach</label>
+                      <select
+                        value={geographicReach}
+                        onChange={e => setGeographicReach(e.target.value)}
+                        style={inputStyle}
+                      >
+                        <option value="">Select...</option>
+                        {GEOGRAPHIC_REACH_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Company Size</label>
+                      <select
+                        value={companySize}
+                        onChange={e => setCompanySize(e.target.value)}
+                        style={inputStyle}
+                      >
+                        <option value="">Select...</option>
+                        {COMPANY_SIZE_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                      </select>
+                    </div>
+                    <div style={{ gridColumn: isMobile ? '1' : '1 / -1', display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+                      <label style={{ ...labelStyle, marginBottom: 0 }}>Manages Wi-Fi</label>
+                      <button
+                        type="button"
+                        onClick={() => setManagesWifi(v => !v)}
+                        style={{
+                          padding: '4px 12px',
+                          borderRadius: 'var(--radius-full)',
+                          border: '1px solid var(--border-default)',
+                          background: managesWifi ? 'var(--gradient-primary)' : 'var(--bg-tertiary)',
+                          color: managesWifi ? 'white' : 'var(--text-secondary)',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {managesWifi ? 'Yes' : 'No'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{
+                  marginBottom: 'var(--space-xl)',
+                  padding: 'var(--space-lg)',
+                  background: 'var(--bg-tertiary)',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--border-default)',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-md)' }}>
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>Post-Discovery</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
+                      Auto-calculates from toggles; override below
+                    </div>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 'var(--space-md)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+                      <label style={{ ...labelStyle, marginBottom: 0 }}>Compatible Hardware Confirmed</label>
+                      <button
+                        type="button"
+                        onClick={() => { setCompatibleHardware(v => !v); setDiscoveryScoreManuallySet(false); }}
+                        style={{
+                          padding: '4px 12px',
+                          borderRadius: 'var(--radius-full)',
+                          border: '1px solid var(--border-default)',
+                          background: compatibleHardware ? 'var(--gradient-primary)' : 'var(--bg-tertiary)',
+                          color: compatibleHardware ? 'white' : 'var(--text-secondary)',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {compatibleHardware ? 'Yes' : 'No'}
+                      </button>
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Deployment Timeline</label>
+                      <select
+                        value={deploymentTimeline}
+                        onChange={e => { setDeploymentTimeline(e.target.value); setDiscoveryScoreManuallySet(false); }}
+                        style={inputStyle}
+                      >
+                        <option value="">Select...</option>
+                        {DEPLOYMENT_TIMELINE_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                      </select>
+                    </div>
+                    <div style={{ gridColumn: isMobile ? '1' : '1 / -1' }}>
+                      <label style={labelStyle}>
+                        Discovery Score (0-50)
+                        {discoveryScoreManuallySet && <span style={{ marginLeft: 8, fontSize: '10px', color: 'var(--accent-primary)' }}>manual</span>}
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={50}
+                        value={discoveryScore}
+                        onChange={e => {
+                          const v = Math.max(0, Math.min(50, Number(e.target.value) || 0));
+                          setDiscoveryScore(v);
+                          setDiscoveryScoreManuallySet(true);
+                        }}
+                        style={inputStyle}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
 
             {/* Pipeline Stage */}
             <div style={{ marginBottom: 'var(--space-lg)' }}>

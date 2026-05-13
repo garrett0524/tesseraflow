@@ -38,7 +38,7 @@ async function seed() {
         review_count INTEGER DEFAULT 0,
         place_id TEXT UNIQUE,
         owner_name TEXT,
-        pipeline_stage TEXT DEFAULT 'new' CHECK(pipeline_stage IN ('new', 'contacted', 'interested', 'meeting_booked', 'closed', 'dead')),
+        pipeline_stage TEXT DEFAULT 'new' CHECK(pipeline_stage IN ('new', 'contacted', 'interested', 'meeting_booked', 'closed', 'dead', 'technical_review', 'contract_sent', 'onboarding', 'live')),
         lead_score INTEGER DEFAULT 0,
         contact_attempts INTEGER DEFAULT 0,
         last_contact_date TEXT,
@@ -198,6 +198,20 @@ async function seed() {
       "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_status VARCHAR(50) DEFAULT 'none'",
       'ALTER TABLE leads ADD COLUMN IF NOT EXISTS instantly_campaign_id VARCHAR(255)',
       'ALTER TABLE leads ADD COLUMN IF NOT EXISTS last_email_at TIMESTAMP',
+      'ALTER TABLE leads ADD COLUMN IF NOT EXISTS country VARCHAR(100)',
+      'ALTER TABLE leads ADD COLUMN IF NOT EXISTS company_size VARCHAR(50)',
+      'ALTER TABLE leads ADD COLUMN IF NOT EXISTS linkedin_url VARCHAR(500)',
+      // MSP/ISP fields
+      'ALTER TABLE leads ADD COLUMN IF NOT EXISTS estimated_locations INTEGER',
+      'ALTER TABLE leads ADD COLUMN IF NOT EXISTS hardware_vendors TEXT',
+      'ALTER TABLE leads ADD COLUMN IF NOT EXISTS manages_wifi BOOLEAN DEFAULT false',
+      'ALTER TABLE leads ADD COLUMN IF NOT EXISTS geographic_reach VARCHAR(100)',
+      'ALTER TABLE leads ADD COLUMN IF NOT EXISTS discovery_score INTEGER DEFAULT 0',
+      'ALTER TABLE leads ADD COLUMN IF NOT EXISTS compatible_hardware BOOLEAN DEFAULT false',
+      'ALTER TABLE leads ADD COLUMN IF NOT EXISTS deployment_timeline VARCHAR(100)',
+      'ALTER TABLE leads ADD COLUMN IF NOT EXISTS auto_score INTEGER DEFAULT 0',
+      'ALTER TABLE leads ADD COLUMN IF NOT EXISTS responded_to_outreach BOOLEAN DEFAULT false',
+      'ALTER TABLE leads ADD COLUMN IF NOT EXISTS decision_maker_engaged BOOLEAN DEFAULT false',
     ];
     for (const migration of apolloMigrations) {
       try {
