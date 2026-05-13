@@ -54,6 +54,9 @@ export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDi
         const match = (lead.business_name || '').toLowerCase().includes(term)
           || (lead.address || '').toLowerCase().includes(term)
           || (lead.owner_name || '').toLowerCase().includes(term)
+          || (lead.contact_name || '').toLowerCase().includes(term)
+          || (lead.contact_title || '').toLowerCase().includes(term)
+          || (lead.email || '').toLowerCase().includes(term)
           || (lead.city || '').toLowerCase().includes(term);
         if (!match) return false;
       }
@@ -204,7 +207,7 @@ export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDi
                 <th onClick={() => handleSort('category')}>Category <SortIcon field="category" /></th>
                 <th>Address</th>
                 <th>Phone</th>
-                <th>Owner</th>
+                <th>Contact</th>
                 <th>Email</th>
                 <th onClick={() => handleSort('estimated_locations')}>Locations <SortIcon field="estimated_locations" /></th>
                 <th>Hardware</th>
@@ -230,8 +233,26 @@ export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDi
                     <td style={{ maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {lead.address ? `${lead.address}, ${lead.city || ''}` : '-'}
                     </td>
-                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: '13px' }}>{lead.phone || '-'}</td>
-                    <td>{lead.owner_name || '-'}</td>
+                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: '13px' }}>
+                      {lead.phone || lead.direct_phone || '-'}
+                    </td>
+                    <td>
+                      {lead.owner_name
+                        ? lead.owner_name
+                        : (lead.contact_name
+                            ? (
+                                <span>
+                                  {lead.contact_name}
+                                  {lead.contact_title && (
+                                    <span style={{ fontSize: '11px', color: 'var(--text-tertiary)', display: 'block' }}>
+                                      {lead.contact_title}
+                                    </span>
+                                  )}
+                                </span>
+                              )
+                            : '-'
+                        )}
+                    </td>
                     <td style={{ maxWidth: '180px' }}>
                       {lead.email ? (
                         <span style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px' }}>

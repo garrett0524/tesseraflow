@@ -268,9 +268,9 @@ router.post('/import', requireAdmin, upload.single('file'), async (req, res) => 
       try {
         const row = records[i];
 
-        // Support both TesseraFlow and Apollo CSV column names.
-        // Apollo exports with capitalized headers like "Company Name"; the parser
-        // keeps both the original-case key and a normalized lowercase form.
+        // Apollo CSV column mapping. Only the fields below are imported —
+        // anything else in the file is intentionally ignored so we never
+        // insert into columns that don't exist on the leads table.
         const pick = (...keys) => {
           for (const k of keys) {
             const v = row[k];
@@ -285,48 +285,43 @@ router.post('/import', requireAdmin, upload.single('file'), async (req, res) => 
           ? `${firstName || ''} ${lastName || ''}`.trim()
           : null;
 
-        const technologies = pick('Technologies', 'technologies');
-        const baseNotes = pick('notes', 'Notes');
-        const noteParts = [];
-        if (baseNotes) noteParts.push(baseNotes);
-        if (technologies) noteParts.push(`Technologies: ${technologies}`);
-
         const lead = {
+          // "Company Name" / "Company Name for Emails" → business_name
           business_name: pick(
             'Company Name', 'Company Name for Emails',
             'business_name', 'name', 'businessname', 'name_for_emails',
             'company', 'company_name', 'companyname', 'companynameforemails'
           ),
-          category: pick('Industry', 'industry', 'category', 'type', 'subtypes'),
-          address: pick('Company Address', 'address', 'full_address', 'street', 'companyaddress'),
-          city: pick('Company City', 'city', 'town', 'companycity'),
+          // "Industry" → category (normalized to MSP/ISP/IT Services/WISP when possible)
+          category: mapIndustryToCategory(pick('Industry', 'industry', 'category')),
+          // "Company Address" → address
+          address: pick('Company Address', 'address', 'companyaddress'),
+          // "Company City" → city
+          city: pick('Company City', 'city', 'companycity'),
+          // "Company State" → state
           state: pick('Company State', 'state', 'state_code', 'companystate') || 'NY',
-          zip: pick('zip', 'zipcode', 'postal', 'postal_code'),
-          country: pick('Company Country', 'country', 'companycountry'),
+          // "Company Phone" / "Corporate Phone" → phone
           phone: pick(
             'Company Phone', 'Corporate Phone',
             'phone', 'phone_number', 'corporate_phone',
             'companyphone', 'corporatephone'
           ),
+          // "Work Direct Phone" / "Mobile Phone" → direct_phone
           direct_phone: pick(
             'Work Direct Phone', 'Mobile Phone',
-            'direct_phone', 'mobile_phone', 'personal_phone',
+            'direct_phone', 'mobile_phone',
             'workdirectphone', 'mobilephone'
           ),
+          // "Website" → website
           website: pick('Website', 'website', 'url', 'company_website'),
-          google_rating: parseFloat(pick('google_rating', 'rating')) || null,
-          review_count: parseInt(pick('review_count', 'reviews'), 10) || 0,
-          place_id: pick('place_id', 'placeid'),
-          owner_name: pick('owner_name', 'owner', 'contact', 'owner_title'),
+          // "Email" → email
           email: pick('Email', 'email', 'email_address'),
-          contact_name: pick('contact_name', 'name') || combinedName,
+          // "First Name" + "Last Name" → contact_name
+          contact_name: pick('contact_name') || combinedName,
+          // "Title" → contact_title
           contact_title: pick('Title', 'contact_title', 'title'),
+          // "# Employees" → company_size (mapped to 1-10 | 11-50 | 51-200 | 200+)
           company_size: mapEmployeeCount(pick('# Employees', 'employees', 'company_size')),
-          linkedin_url: pick(
-            'Person Linkedin Url', 'Person LinkedIn Url',
-            'personlinkedinurl', 'person_linkedin_url', 'linkedin_url'
-          ),
-          notes: noteParts.length > 0 ? noteParts.join('\n') : null,
         };
 
         if (!lead.business_name) {
@@ -340,13 +335,9 @@ router.post('/import', requireAdmin, upload.single('file'), async (req, res) => 
           }
         }
 
-        // Check for existing lead by place_id OR by business_name + city (for Apollo merge)
+        // Dedupe by business_name + city to merge Apollo rows for the same company
         let existingId = null;
-        if (lead.place_id) {
-          const { rows: [existing] } = await query('SELECT id FROM leads WHERE place_id = $1', [lead.place_id]);
-          if (existing) existingId = existing.id;
-        }
-        if (!existingId && lead.business_name && lead.city) {
+        if (lead.business_name && lead.city) {
           const { rows: [existing] } = await query(
             'SELECT id FROM leads WHERE LOWER(business_name) = LOWER($1) AND LOWER(city) = LOWER($2) LIMIT 1',
             [lead.business_name, lead.city]
@@ -355,7 +346,8 @@ router.post('/import', requireAdmin, upload.single('file'), async (req, res) => 
         }
 
         if (existingId) {
-          // Update existing lead with new email/contact info (merge)
+          // Merge: only update fields we have new values for, and only fields
+          // that map to real columns. No country/linkedin_url/technologies.
           const updateFields = [];
           const updateParams = [];
           let pIdx = 1;
@@ -363,19 +355,16 @@ router.post('/import', requireAdmin, upload.single('file'), async (req, res) => 
           if (lead.contact_name) { updateFields.push(`contact_name = $${pIdx++}`); updateParams.push(lead.contact_name); }
           if (lead.contact_title) { updateFields.push(`contact_title = $${pIdx++}`); updateParams.push(lead.contact_title); }
           if (lead.direct_phone) { updateFields.push(`direct_phone = $${pIdx++}`); updateParams.push(lead.direct_phone); }
-          if (lead.phone && !lead.direct_phone) { updateFields.push(`phone = $${pIdx++}`); updateParams.push(lead.phone); }
-          if (lead.country) { updateFields.push(`country = $${pIdx++}`); updateParams.push(lead.country); }
+          if (lead.phone) { updateFields.push(`phone = COALESCE(NULLIF(phone, ''), $${pIdx++})`); updateParams.push(lead.phone); }
+          if (lead.website) { updateFields.push(`website = COALESCE(NULLIF(website, ''), $${pIdx++})`); updateParams.push(lead.website); }
+          if (lead.address) { updateFields.push(`address = COALESCE(NULLIF(address, ''), $${pIdx++})`); updateParams.push(lead.address); }
+          if (lead.category) { updateFields.push(`category = COALESCE(NULLIF(category, ''), $${pIdx++})`); updateParams.push(lead.category); }
           if (lead.company_size) { updateFields.push(`company_size = $${pIdx++}`); updateParams.push(lead.company_size); }
-          if (lead.linkedin_url) { updateFields.push(`linkedin_url = $${pIdx++}`); updateParams.push(lead.linkedin_url); }
-          if (lead.notes) {
-            updateFields.push(`notes = CASE WHEN notes IS NULL OR notes = '' THEN $${pIdx} ELSE notes || E'\\n' || $${pIdx} END`);
-            updateParams.push(lead.notes);
-            pIdx++;
-          }
           if (updateFields.length > 0) {
             updateFields.push('updated_at = NOW()');
             updateParams.push(existingId);
             await query(`UPDATE leads SET ${updateFields.join(', ')} WHERE id = $${pIdx}`, updateParams);
+            await scoreLead(existingId);
             updated++;
           } else {
             skipped++;
@@ -383,30 +372,28 @@ router.post('/import', requireAdmin, upload.single('file'), async (req, res) => 
           continue;
         }
 
+        // Insert: only the 12 spec'd columns (+ state default). Anything else
+        // is left to defaults so we don't touch optional columns that may not
+        // exist on every install.
         const { rows: [inserted] } = await query(
-          `INSERT INTO leads (business_name, category, address, city, state, zip, country,
-            phone, website, google_rating, review_count, place_id, owner_name,
-            email, contact_name, contact_title, direct_phone,
-            company_size, linkedin_url, notes)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+          `INSERT INTO leads (
+             business_name, category, address, city, state,
+             phone, direct_phone, website, email,
+             contact_name, contact_title, company_size
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
            RETURNING id`,
           [
-            lead.business_name, lead.category, lead.address, lead.city,
-            lead.state, lead.zip, lead.country, lead.phone, lead.website,
-            lead.google_rating, lead.review_count, lead.place_id, lead.owner_name,
-            lead.email, lead.contact_name, lead.contact_title, lead.direct_phone,
-            lead.company_size, lead.linkedin_url, lead.notes
+            lead.business_name, lead.category, lead.address, lead.city, lead.state,
+            lead.phone, lead.direct_phone, lead.website, lead.email,
+            lead.contact_name, lead.contact_title, lead.company_size,
           ]
         );
 
         if (inserted) await scoreLead(inserted.id);
         imported++;
       } catch (rowErr) {
-        if (rowErr.message && rowErr.message.includes('unique')) {
-          skipped++;
-        } else {
-          errors.push({ line: i + 2, error: String(rowErr.message || rowErr) });
-        }
+        errors.push({ line: i + 2, error: String(rowErr.message || rowErr) });
       }
     }
 
@@ -534,21 +521,64 @@ function formatDate(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+/**
+ * Map raw "# Employees" cell to one of the four MSP-profile ranges:
+ * "1-10" | "11-50" | "51-200" | "200+". Apollo may export either a raw
+ * number ("47") or a pre-formatted range ("11-50", "1,000-5,000").
+ */
 function mapEmployeeCount(raw) {
   if (raw === null || raw === undefined || raw === '') return null;
   const str = String(raw).trim();
-  // Pass through values that already look like a range (e.g. "51-200", "10001+")
-  if (/^\d+\s*[-+]/.test(str) || /[a-z]/i.test(str)) return str;
+
+  // If it's already a range, extract the upper bound and re-bucket
+  const rangeMatch = str.match(/(\d[\d,]*)\s*-\s*(\d[\d,]*)/);
+  if (rangeMatch) {
+    const upper = parseInt(rangeMatch[2].replace(/,/g, ''), 10);
+    return bucketSize(upper);
+  }
+
+  // Pre-formatted "200+" / "10000+" / "5,000+"
+  const plusMatch = str.match(/(\d[\d,]*)\s*\+/);
+  if (plusMatch) {
+    return bucketSize(parseInt(plusMatch[1].replace(/,/g, ''), 10));
+  }
+
+  // Plain number ("47" or "1,234")
   const n = parseInt(str.replace(/[^0-9]/g, ''), 10);
   if (!Number.isFinite(n) || n <= 0) return null;
+  return bucketSize(n);
+}
+
+function bucketSize(n) {
   if (n <= 10) return '1-10';
   if (n <= 50) return '11-50';
   if (n <= 200) return '51-200';
-  if (n <= 500) return '201-500';
-  if (n <= 1000) return '501-1000';
-  if (n <= 5000) return '1001-5000';
-  if (n <= 10000) return '5001-10000';
-  return '10001+';
+  return '200+';
+}
+
+/**
+ * Normalize Apollo's free-text "Industry" to one of our known categories.
+ * Falls back to the original value if nothing matches so the data is still
+ * preserved (the user can filter on it from the table).
+ */
+function mapIndustryToCategory(raw) {
+  if (!raw) return null;
+  const s = String(raw).toLowerCase();
+
+  // MSP-style buckets — order matters: check the more specific ones first
+  if (s.includes('managed services') || s.includes('managed it') || s.includes('msp')) return 'MSP';
+  if (s.includes('wisp') || (s.includes('wireless') && s.includes('isp'))) return 'WISP';
+  if (s.includes('internet service') || s.includes('isp') || s.includes('telecom') || s.includes('telecommunication') || s.includes('broadband')) return 'ISP';
+  if (s.includes('information technology') || s.includes('it services') || s.includes('it consulting') || s.includes('computer & network') || s.includes('network security') || s.includes('computer networking')) return 'IT Services';
+
+  // Hospitality / fitness fallbacks for non-MSP leads
+  if (s.includes('restaurant') || s.includes('food & beverage')) return 'Restaurant';
+  if (s.includes('bar') || s.includes('tavern') || s.includes('pub') || s.includes('nightclub')) return 'Bar';
+  if (s.includes('gym') || s.includes('crossfit')) return 'Gym';
+  if (s.includes('fitness') || s.includes('health, wellness') || s.includes('yoga') || s.includes('martial')) return 'Fitness Center';
+
+  // Preserve the original value if it doesn't match any known bucket
+  return String(raw).trim();
 }
 
 /**
