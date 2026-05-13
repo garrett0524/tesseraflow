@@ -74,9 +74,19 @@ export const resetUserPassword = (id) => fetchApi(`/users/${id}/reset-password`,
 // Leads
 // ============================================================
 export const getLeads = (params = {}) => {
-  const query = new URLSearchParams(params).toString();
+  // Drop empty/null params so they don't appear as `key=` in the URL
+  const cleaned = Object.fromEntries(
+    Object.entries(params).filter(([, v]) => v !== '' && v !== null && v !== undefined)
+  );
+  const query = new URLSearchParams(cleaned).toString();
   return fetchApi(`/leads${query ? '?' + query : ''}`);
 };
+
+export const getKanbanLeads = (perStage = 20) =>
+  fetchApi(`/leads/kanban?per_stage=${perStage}`);
+
+export const getLeadsByStage = (stage, page = 1, limit = 20) =>
+  fetchApi(`/leads/by-stage/${encodeURIComponent(stage)}?page=${page}&limit=${limit}`);
 
 export const getLead = (id) => fetchApi(`/leads/${id}`);
 

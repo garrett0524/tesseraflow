@@ -69,6 +69,32 @@
   padding: var(--space-xl) var(--space-sm);
 }
 
+.kanban-show-more {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  margin-top: var(--space-xs);
+}
+
+.kanban-show-more:hover:not(:disabled) {
+  background: rgba(129, 140, 248, 0.08);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.kanban-show-more:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* ── Kanban Card ── */
 .kanban-card {
   background: var(--bg-card-elevated);

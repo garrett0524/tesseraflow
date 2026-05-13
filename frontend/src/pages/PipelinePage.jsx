@@ -4,15 +4,13 @@ import KanbanBoard from '../components/Pipeline/KanbanBoard'
 import LeadTable from '../components/Pipeline/LeadTable'
 import LeadDetailModal from '../components/Shared/LeadDetailModal'
 import TodayScheduleWidget from '../components/Calendar/TodayScheduleWidget'
-import { getLeads, updateLead, createLead, enrichBulk, getEnrichBulkStatus, getInstantlyCampaigns, pushFilteredToInstantly } from '../api'
+import { updateLead, createLead, enrichBulk, getEnrichBulkStatus, getInstantlyCampaigns, pushFilteredToInstantly } from '../api'
 
 export default function PipelinePage() {
-  const [leads, setLeads] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [selectedLead, setSelectedLead] = useState(null);
-  const [sortField, setSortField] = useState('created_at');
-  const [sortDir, setSortDir] = useState('desc');
   const [showAddLead, setShowAddLead] = useState(false);
+  const [refreshToken, setRefreshToken] = useState(0);
+  const bumpRefresh = useCallback(() => setRefreshToken(t => t + 1), []);
 
   // Bulk action state
   const [showEnrichMenu, setShowEnrichMenu] = useState(false);
@@ -76,7 +74,7 @@ export default function PipelinePage() {
               message: `Enriched: ${status.enriched || 0}, Not found: ${status.not_found || 0}, Already had email: ${status.already_had_email || 0}, Credits used: ${status.credits_used || 0}, Errors: ${status.errors || 0}`,
               done: true,
             });
-            fetchLeads();
+            bumpRefresh();
           } else {
             setBulkProgress({
               title: 'Enriching Leads',
@@ -128,55 +126,23 @@ export default function PipelinePage() {
         message: `Pushed: ${result.pushed || 0}, Skipped (no email): ${result.skipped_no_email || 0}, Errors: ${result.errors || 0}`,
         done: true,
       });
-      fetchLeads();
+      bumpRefresh();
     } catch (err) {
       setBulkProgress({ title: 'Push Failed', message: err.message, done: true });
     }
   };
 
-  const fetchLeads = useCallback(async () => {
-    try {
-      const result = await getLeads();
-      setLeads(result.data || []);
-    } catch (err) {
-      console.error('Failed to load leads:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchLeads();
-  }, [fetchLeads]);
-
   const handleStageChange = async (leadId, newStage) => {
     try {
       await updateLead(leadId, { pipeline_stage: newStage });
-      setLeads(prev => prev.map(l =>
-        l.id === leadId ? { ...l, pipeline_stage: newStage } : l
-      ));
+      // KanbanBoard already applies the move optimistically; bump anyway so
+      // the LeadTable reflects the new stage on the current page.
+      bumpRefresh();
     } catch (err) {
       console.error('Failed to update stage:', err);
+      bumpRefresh(); // refetch to revert the optimistic move
     }
   };
-
-  const handleSort = (field) => {
-    if (field === sortField) {
-      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortField(field);
-      setSortDir('asc');
-    }
-  };
-
-  const sortedLeads = [...leads].sort((a, b) => {
-    const aVal = a[sortField] ?? '';
-    const bVal = b[sortField] ?? '';
-    const cmp = typeof aVal === 'number'
-      ? aVal - bVal
-      : String(aVal).localeCompare(String(bVal));
-    return sortDir === 'asc' ? cmp : -cmp;
-  });
 
   const handleCardClick = (lead) => {
     setSelectedLead(lead);
@@ -185,7 +151,7 @@ export default function PipelinePage() {
   const handleLeadUpdate = async (id, data) => {
     try {
       await updateLead(id, data);
-      await fetchLeads();
+      bumpRefresh();
       setSelectedLead(null);
     } catch (err) {
       console.error('Failed to update lead:', err);
@@ -195,21 +161,13 @@ export default function PipelinePage() {
   const handleAddLead = async (data) => {
     try {
       await createLead(data);
-      await fetchLeads();
+      bumpRefresh();
       setShowAddLead(false);
     } catch (err) {
       console.error('Failed to create lead:', err);
       throw err;
     }
   };
-
-  if (loading) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '50vh', color: 'var(--text-tertiary)', fontFamily: 'var(--font-body)', fontSize: '14px' }}>
-        Loading pipeline...
-      </div>
-    );
-  }
 
   return (
     <div style={{ animation: 'fadeInContent 0.3s ease' }}>
@@ -361,18 +319,14 @@ export default function PipelinePage() {
       <StatsBar />
 
       <KanbanBoard
-        leads={leads}
         onStageChange={handleStageChange}
         onCardClick={handleCardClick}
+        refreshToken={refreshToken}
       />
 
       <LeadTable
-        leads={sortedLeads}
         onRowClick={handleCardClick}
-        onSort={handleSort}
-        sortField={sortField}
-        sortDir={sortDir}
-        onLeadEnriched={fetchLeads}
+        refreshToken={refreshToken}
       />
 
       {selectedLead && (

@@ -1,5 +1,5 @@
-import { useState, useMemo, useEffect } from 'react'
-import { enrichLead } from '../../api'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { enrichLead, getLeads } from '../../api'
 import './LeadTable.css'
 
 const STAGE_LABELS = {
@@ -28,10 +28,28 @@ const EMAIL_STATUS_DOT = {
   bounced: '#ef4444',
 };
 
-export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDir, onLeadEnriched }) {
+const PAGE_SIZE = 50;
+
+export default function LeadTable({ onRowClick, refreshToken = 0 }) {
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
-  const [search, setSearch] = useState('');
+
+  // Sort state
+  const [sortField, setSortField] = useState('created_at');
+  const [sortDir, setSortDir] = useState('desc');
+
+  // Pagination state
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+
+  // Data state
+  const [leads, setLeads] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [enrichingId, setEnrichingId] = useState(null);
+
+  // Filter inputs (live) vs applied filters (sent to server, debounced)
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [filters, setFilters] = useState({
     category: '',
     stage: '',
@@ -41,59 +59,104 @@ export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDi
     emailStatus: '',
   });
 
+  // Debounce search 300ms
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Reset to page 1 whenever filters/search/sort change
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, filters.category, filters.stage, filters.attempts,
+      filters.scoreMin, filters.scoreMax, filters.emailStatus,
+      sortField, sortDir]);
+
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth <= 768);
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const filteredLeads = useMemo(() => {
-    return leads.filter(lead => {
-      if (search) {
-        const term = search.toLowerCase();
-        const match = (lead.business_name || '').toLowerCase().includes(term)
-          || (lead.address || '').toLowerCase().includes(term)
-          || (lead.owner_name || '').toLowerCase().includes(term)
-          || (lead.contact_name || '').toLowerCase().includes(term)
-          || (lead.contact_title || '').toLowerCase().includes(term)
-          || (lead.email || '').toLowerCase().includes(term)
-          || (lead.city || '').toLowerCase().includes(term);
-        if (!match) return false;
-      }
-      if (filters.category && lead.category !== filters.category) return false;
-      if (filters.stage && lead.pipeline_stage !== filters.stage) return false;
-      if (filters.attempts) {
-        const att = lead.contact_attempts || 0;
-        if (filters.attempts === '0' && att !== 0) return false;
-        if (filters.attempts === '1-3' && (att < 1 || att > 3)) return false;
-        if (filters.attempts === '4+' && att < 4) return false;
-      }
-      if (filters.scoreMin && lead.lead_score < Number(filters.scoreMin)) return false;
-      if (filters.scoreMax && lead.lead_score > Number(filters.scoreMax)) return false;
-      if (filters.emailStatus) {
-        const status = lead.email_status || 'none';
-        if (filters.emailStatus === 'no_email' && lead.email) return false;
-        else if (filters.emailStatus === 'has_email' && !lead.email) return false;
-        else if (!['no_email', 'has_email'].includes(filters.emailStatus) && status !== filters.emailStatus) return false;
-      }
-      return true;
-    });
-  }, [leads, search, filters]);
+  // Track in-flight requests so a slow earlier response can't overwrite a newer one
+  const reqIdRef = useRef(0);
 
-  const categories = useMemo(() => {
-    const cats = new Set(leads.map(l => l.category).filter(Boolean));
-    for (const c of KNOWN_CATEGORIES) cats.add(c);
-    return [...cats].sort();
-  }, [leads]);
+  const fetchPage = useCallback(async () => {
+    const myReqId = ++reqIdRef.current;
+    setLoading(true);
+    try {
+      const params = {
+        page,
+        limit: PAGE_SIZE,
+        sort: sortField,
+        sort_dir: sortDir,
+      };
+      if (debouncedSearch) params.search = debouncedSearch;
+      if (filters.category) params.category = filters.category;
+      if (filters.stage) params.stage = filters.stage;
+      if (filters.attempts) params.attempts = filters.attempts;
+      if (filters.scoreMin) params.score_min = filters.scoreMin;
+      if (filters.scoreMax) params.score_max = filters.scoreMax;
+      if (filters.emailStatus) params.email_status = filters.emailStatus;
+
+      const res = await getLeads(params);
+      if (myReqId !== reqIdRef.current) return; // newer request landed first
+      setLeads(res.data || []);
+      setTotal(res.total || 0);
+      setTotalPages(res.totalPages || 1);
+    } catch (err) {
+      if (myReqId === reqIdRef.current) {
+        console.error('Failed to load leads:', err);
+        setLeads([]);
+        setTotal(0);
+        setTotalPages(1);
+      }
+    } finally {
+      if (myReqId === reqIdRef.current) setLoading(false);
+    }
+  }, [page, sortField, sortDir, debouncedSearch, filters]);
+
+  useEffect(() => {
+    fetchPage();
+  }, [fetchPage, refreshToken]);
 
   const handleSort = (field) => {
-    if (onSort) onSort(field);
+    if (field === sortField) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDir('asc');
+    }
   };
 
   const SortIcon = ({ field }) => {
     if (sortField !== field) return <span className="sort-icon">&#8693;</span>;
-    return <span className="sort-icon">{sortDir === 'asc' ? '&#8593;' : '&#8595;'}</span>;
+    return <span className="sort-icon">{sortDir === 'asc' ? '↑' : '↓'}</span>;
   };
+
+  const handleEnrich = (lead, e) => {
+    e.stopPropagation();
+    setEnrichingId(lead.id);
+    enrichLead(lead.id)
+      .then(() => fetchPage())
+      .catch(() => {})
+      .finally(() => setEnrichingId(null));
+  };
+
+  const goToPage = (p) => {
+    const clamped = Math.max(1, Math.min(totalPages, p));
+    if (clamped !== page) setPage(clamped);
+  };
+
+  // Categories shown in filter dropdown: known set ∪ what's in the current page
+  const categoryOptions = (() => {
+    const cats = new Set(leads.map(l => l.category).filter(Boolean));
+    for (const c of KNOWN_CATEGORIES) cats.add(c);
+    return [...cats].sort();
+  })();
+
+  const showingFrom = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const showingTo = Math.min(total, page * PAGE_SIZE);
 
   return (
     <div className="lead-table-container">
@@ -106,21 +169,21 @@ export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDi
           onChange={e => setSearch(e.target.value)}
           className="lead-search"
         />
-        <select value={filters.category} onChange={e => setFilters(f => ({...f, category: e.target.value}))}>
+        <select value={filters.category} onChange={e => setFilters(f => ({ ...f, category: e.target.value }))}>
           <option value="">All Categories</option>
-          {categories.map(c => <option key={c} value={c}>{c}</option>)}
+          {categoryOptions.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
-        <select value={filters.stage} onChange={e => setFilters(f => ({...f, stage: e.target.value}))}>
+        <select value={filters.stage} onChange={e => setFilters(f => ({ ...f, stage: e.target.value }))}>
           <option value="">All Stages</option>
           {Object.entries(STAGE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </select>
-        <select value={filters.attempts} onChange={e => setFilters(f => ({...f, attempts: e.target.value}))}>
+        <select value={filters.attempts} onChange={e => setFilters(f => ({ ...f, attempts: e.target.value }))}>
           <option value="">All Attempts</option>
           <option value="0">0 attempts</option>
           <option value="1-3">1-3 attempts</option>
           <option value="4+">4+ attempts</option>
         </select>
-        <select value={filters.emailStatus} onChange={e => setFilters(f => ({...f, emailStatus: e.target.value}))}>
+        <select value={filters.emailStatus} onChange={e => setFilters(f => ({ ...f, emailStatus: e.target.value }))}>
           <option value="">Email Status</option>
           <option value="no_email">No Email</option>
           <option value="has_email">Has Email</option>
@@ -133,14 +196,14 @@ export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDi
           type="number"
           placeholder="Score min"
           value={filters.scoreMin}
-          onChange={e => setFilters(f => ({...f, scoreMin: e.target.value}))}
+          onChange={e => setFilters(f => ({ ...f, scoreMin: e.target.value }))}
           style={{ width: '100px' }}
         />
         <input
           type="number"
           placeholder="Score max"
           value={filters.scoreMax}
-          onChange={e => setFilters(f => ({...f, scoreMax: e.target.value}))}
+          onChange={e => setFilters(f => ({ ...f, scoreMax: e.target.value }))}
           style={{ width: '100px' }}
         />
       </div>
@@ -148,12 +211,16 @@ export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDi
       {/* Mobile Card View */}
       {isMobile ? (
         <div className="lead-card-list" style={{ padding: 'var(--space-sm)' }}>
-          {filteredLeads.length === 0 ? (
+          {loading ? (
             <div style={{ textAlign: 'center', color: 'var(--text-tertiary)', padding: 'var(--space-3xl)' }}>
-              {leads.length === 0 ? 'No leads yet — run a scrape or import CSV' : 'No leads match filters'}
+              Loading...
+            </div>
+          ) : leads.length === 0 ? (
+            <div style={{ textAlign: 'center', color: 'var(--text-tertiary)', padding: 'var(--space-3xl)' }}>
+              {total === 0 ? 'No leads match filters' : 'No leads on this page'}
             </div>
           ) : (
-            filteredLeads.map(lead => (
+            leads.map(lead => (
               <div
                 key={lead.id}
                 onClick={() => onRowClick(lead)}
@@ -164,7 +231,6 @@ export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDi
                   padding: 'var(--space-md)',
                   marginBottom: 'var(--space-sm)',
                   cursor: 'pointer',
-                  transition: 'background 0.15s ease',
                   minHeight: '44px',
                 }}
               >
@@ -219,14 +285,20 @@ export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDi
               </tr>
             </thead>
             <tbody>
-              {filteredLeads.length === 0 ? (
+              {loading ? (
                 <tr>
                   <td colSpan={13} style={{ textAlign: 'center', color: 'var(--text-tertiary)', padding: 'var(--space-3xl)' }}>
-                    {leads.length === 0 ? 'No leads yet — run a scrape or import CSV' : 'No leads match filters'}
+                    Loading...
+                  </td>
+                </tr>
+              ) : leads.length === 0 ? (
+                <tr>
+                  <td colSpan={13} style={{ textAlign: 'center', color: 'var(--text-tertiary)', padding: 'var(--space-3xl)' }}>
+                    {total === 0 ? 'No leads match filters' : 'No leads on this page'}
                   </td>
                 </tr>
               ) : (
-                filteredLeads.map(lead => (
+                leads.map(lead => (
                   <tr key={lead.id} onClick={() => onRowClick(lead)} style={{ cursor: 'pointer' }}>
                     <td style={{ fontWeight: 500 }}>{lead.business_name}</td>
                     <td>{lead.category || '-'}</td>
@@ -264,13 +336,7 @@ export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDi
                         </span>
                       ) : (
                         <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setEnrichingId(lead.id);
-                            enrichLead(lead.id).then(() => {
-                              if (onLeadEnriched) onLeadEnriched();
-                            }).catch(() => {}).finally(() => setEnrichingId(null));
-                          }}
+                          onClick={(e) => handleEnrich(lead, e)}
                           disabled={enrichingId === lead.id}
                           style={{
                             background: 'none', border: 'none', color: '#8b5cf6', cursor: 'pointer',
@@ -294,7 +360,7 @@ export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDi
                     </td>
                     <td>
                       {lead.last_contact_date
-                        ? `${lead.last_contact_date.split('T')[0]} (${lead.last_contact_method || '-'})`
+                        ? `${String(lead.last_contact_date).split('T')[0]} (${lead.last_contact_method || '-'})`
                         : 'Never'}
                     </td>
                     <td style={{ textAlign: 'center' }}>{lead.contact_attempts || 0}</td>
@@ -308,7 +374,7 @@ export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDi
                       </span>
                     </td>
                     <td style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                      {lead.created_at ? lead.created_at.split('T')[0] : '-'}
+                      {lead.created_at ? String(lead.created_at).split('T')[0] : '-'}
                     </td>
                   </tr>
                 ))
@@ -317,8 +383,39 @@ export default function LeadTable({ leads, onRowClick, onSort, sortField, sortDi
           </table>
         </div>
       )}
-      <div className="lead-table-footer">
-        Showing {filteredLeads.length} of {leads.length} leads
+
+      {/* Pagination footer */}
+      <div className="lead-table-footer" style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: 'var(--space-md)',
+        flexWrap: 'wrap',
+      }}>
+        <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>
+          {total === 0
+            ? 'No leads'
+            : `Showing ${showingFrom.toLocaleString()}–${showingTo.toLocaleString()} of ${total.toLocaleString()}`}
+        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+          <button
+            className="btn btn-sm btn-secondary"
+            onClick={() => goToPage(page - 1)}
+            disabled={page <= 1 || loading}
+          >
+            ← Previous
+          </button>
+          <span style={{ fontSize: '12px', color: 'var(--text-secondary)', minWidth: '100px', textAlign: 'center' }}>
+            Page {page} of {totalPages}
+          </span>
+          <button
+            className="btn btn-sm btn-secondary"
+            onClick={() => goToPage(page + 1)}
+            disabled={page >= totalPages || loading}
+          >
+            Next →
+          </button>
+        </div>
       </div>
     </div>
   );

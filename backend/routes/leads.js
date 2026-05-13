@@ -20,76 +20,194 @@ const upload = multer({
   }
 });
 
-// GET /api/leads - List all leads with filters
+// Build the WHERE clause shared by list + count so the two stay in lockstep.
+function buildLeadsWhere(qs, startIdx = 1) {
+  const params = [];
+  let idx = startIdx;
+  let sql = '';
+
+  if (qs.category) {
+    sql += ` AND category = $${idx++}`;
+    params.push(qs.category);
+  }
+  if (qs.stage) {
+    sql += ` AND pipeline_stage = $${idx++}`;
+    params.push(qs.stage);
+  }
+  if (qs.score_min) {
+    sql += ` AND lead_score >= $${idx++}`;
+    params.push(Number(qs.score_min));
+  }
+  if (qs.score_max) {
+    sql += ` AND lead_score <= $${idx++}`;
+    params.push(Number(qs.score_max));
+  }
+  if (qs.date_from) {
+    sql += ` AND created_at >= $${idx++}`;
+    params.push(qs.date_from);
+  }
+  if (qs.date_to) {
+    sql += ` AND created_at <= $${idx++}`;
+    params.push(qs.date_to);
+  }
+  if (qs.email_status) {
+    if (qs.email_status === 'no_email') {
+      sql += ` AND (email IS NULL OR email = '')`;
+    } else if (qs.email_status === 'has_email') {
+      sql += ` AND email IS NOT NULL AND email <> ''`;
+    } else {
+      sql += ` AND email_status = $${idx++}`;
+      params.push(qs.email_status);
+    }
+  }
+  if (qs.attempts) {
+    if (qs.attempts === '0') {
+      sql += ` AND COALESCE(contact_attempts, 0) = 0`;
+    } else if (qs.attempts === '1-3') {
+      sql += ` AND contact_attempts BETWEEN 1 AND 3`;
+    } else if (qs.attempts === '4+') {
+      sql += ` AND contact_attempts >= 4`;
+    }
+  }
+  if (qs.search) {
+    sql += ` AND (
+      business_name ILIKE $${idx} OR
+      address ILIKE $${idx} OR
+      owner_name ILIKE $${idx} OR
+      contact_name ILIKE $${idx} OR
+      contact_title ILIKE $${idx} OR
+      email ILIKE $${idx} OR
+      city ILIKE $${idx}
+    )`;
+    params.push(`%${qs.search}%`);
+    idx++;
+  }
+
+  return { sql, params, nextIdx: idx };
+}
+
+const SORTABLE_COLUMNS = new Set([
+  'business_name', 'category', 'pipeline_stage', 'lead_score',
+  'last_contact_date', 'contact_attempts', 'created_at',
+  'estimated_locations',
+]);
+
+// GET /api/leads - List leads with filters + server-side pagination
 router.get('/', async (req, res) => {
   try {
-    let sql = 'SELECT * FROM leads WHERE 1=1';
-    const params = [];
-    let paramIdx = 1;
+    const limit = Math.max(1, Math.min(500, Number(req.query.limit) || 50));
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const offset = (page - 1) * limit;
 
-    if (req.query.category) {
-      sql += ` AND category = $${paramIdx++}`;
-      params.push(req.query.category);
-    }
-    if (req.query.stage) {
-      sql += ` AND pipeline_stage = $${paramIdx++}`;
-      params.push(req.query.stage);
-    }
-    if (req.query.score_min) {
-      sql += ` AND lead_score >= $${paramIdx++}`;
-      params.push(Number(req.query.score_min));
-    }
-    if (req.query.score_max) {
-      sql += ` AND lead_score <= $${paramIdx++}`;
-      params.push(Number(req.query.score_max));
-    }
-    if (req.query.date_from) {
-      sql += ` AND created_at >= $${paramIdx++}`;
-      params.push(req.query.date_from);
-    }
-    if (req.query.date_to) {
-      sql += ` AND created_at <= $${paramIdx++}`;
-      params.push(req.query.date_to);
-    }
-    if (req.query.search) {
-      sql += ` AND (business_name ILIKE $${paramIdx} OR address ILIKE $${paramIdx} OR owner_name ILIKE $${paramIdx})`;
-      params.push(`%${req.query.search}%`);
-      paramIdx++;
-    }
+    const sortField = SORTABLE_COLUMNS.has(req.query.sort) ? req.query.sort : 'created_at';
+    const sortDir = String(req.query.sort_dir || 'desc').toLowerCase() === 'asc' ? 'ASC' : 'DESC';
 
-    sql += ' ORDER BY created_at DESC';
+    const where = buildLeadsWhere(req.query, 1);
+    const listSql = `SELECT * FROM leads WHERE 1=1${where.sql} ORDER BY ${sortField} ${sortDir} NULLS LAST, id DESC LIMIT $${where.nextIdx} OFFSET $${where.nextIdx + 1}`;
+    const listParams = [...where.params, limit, offset];
 
-    if (req.query.limit) {
-      sql += ` LIMIT $${paramIdx++}`;
-      params.push(Number(req.query.limit));
-    }
-    if (req.query.offset) {
-      sql += ` OFFSET $${paramIdx++}`;
-      params.push(Number(req.query.offset));
-    }
+    const countSql = `SELECT COUNT(*)::int AS total FROM leads WHERE 1=1${where.sql}`;
 
-    const { rows: leads } = await query(sql, params);
+    const [{ rows: leads }, { rows: [countRow] }] = await Promise.all([
+      query(listSql, listParams),
+      query(countSql, where.params),
+    ]);
 
-    // Get total count for pagination
-    let countSql = 'SELECT COUNT(*) as total FROM leads WHERE 1=1';
-    const countParams = [];
-    let countIdx = 1;
-    if (req.query.category) {
-      countSql += ` AND category = $${countIdx++}`;
-      countParams.push(req.query.category);
-    }
-    if (req.query.stage) {
-      countSql += ` AND pipeline_stage = $${countIdx++}`;
-      countParams.push(req.query.stage);
-    }
-    const { rows: [countResult] } = await query(countSql, countParams);
+    const total = countRow ? Number(countRow.total) : 0;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
 
     res.json({
       data: leads,
-      total: countResult ? parseInt(countResult.total) : leads.length
+      total,
+      page,
+      limit,
+      totalPages,
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch leads', message: err.message });
+  }
+});
+
+// GET /api/leads/kanban - Lightweight preview for the kanban: first N leads
+// per stage plus the full per-stage count, in a single round-trip.
+router.get('/kanban', async (req, res) => {
+  try {
+    const perStage = Math.max(1, Math.min(100, Number(req.query.per_stage) || 20));
+
+    // Per-stage totals (drives Show More button visibility)
+    const { rows: countRows } = await query(
+      'SELECT pipeline_stage, COUNT(*)::int AS total FROM leads GROUP BY pipeline_stage'
+    );
+    const totals = {};
+    for (const r of countRows) totals[r.pipeline_stage] = Number(r.total);
+
+    // First N leads per stage, in one query via window function (PostgreSQL).
+    // Only select the columns the kanban card actually renders to keep the
+    // payload small for 200+ visible cards.
+    const { rows: leads } = await query(
+      `SELECT id, business_name, category, pipeline_stage, lead_score,
+              contact_attempts, last_contact_date, created_at,
+              estimated_locations, hardware_vendors
+       FROM (
+         SELECT l.*, ROW_NUMBER() OVER (
+           PARTITION BY pipeline_stage ORDER BY created_at DESC, id DESC
+         ) AS rn
+         FROM leads l
+       ) sub
+       WHERE rn <= $1
+       ORDER BY pipeline_stage, created_at DESC`,
+      [perStage]
+    );
+
+    const byStage = {};
+    for (const lead of leads) {
+      if (!byStage[lead.pipeline_stage]) byStage[lead.pipeline_stage] = [];
+      byStage[lead.pipeline_stage].push(lead);
+    }
+
+    res.json({
+      data: byStage,
+      totals,
+      per_stage: perStage,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch kanban data', message: err.message });
+  }
+});
+
+// GET /api/leads/by-stage/:stage - Paginated leads for a single stage
+// (used by the kanban "Show more" button).
+router.get('/by-stage/:stage', async (req, res) => {
+  try {
+    const stage = req.params.stage;
+    const limit = Math.max(1, Math.min(200, Number(req.query.limit) || 20));
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const offset = (page - 1) * limit;
+
+    const [{ rows: leads }, { rows: [countRow] }] = await Promise.all([
+      query(
+        `SELECT id, business_name, category, pipeline_stage, lead_score,
+                contact_attempts, last_contact_date, created_at,
+                estimated_locations, hardware_vendors
+         FROM leads
+         WHERE pipeline_stage = $1
+         ORDER BY created_at DESC, id DESC
+         LIMIT $2 OFFSET $3`,
+        [stage, limit, offset]
+      ),
+      query('SELECT COUNT(*)::int AS total FROM leads WHERE pipeline_stage = $1', [stage]),
+    ]);
+
+    const total = countRow ? Number(countRow.total) : 0;
+    res.json({
+      data: leads,
+      total,
+      page,
+      limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch stage', message: err.message });
   }
 });
 
