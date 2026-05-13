@@ -67,9 +67,9 @@ function calculateAutoScore(lead, engagement = {}) {
     } else if (cat.includes('gym') || cat.includes('fitness') || cat.includes('crossfit') ||
                cat.includes('yoga') || cat.includes('martial')) {
       score += 15;
-    } else if (cat.includes('casino') || cat.includes('gaming') || cat.includes('gambling')) {
-      score += 15;
-    } else if (cat.includes('hotel') || cat.includes('lodging') || cat.includes('resort') || cat.includes('hospitality')) {
+    } else if (cat.includes('casino') || cat.includes('gaming') || cat.includes('gambling')
+               || cat.includes('hotel') || cat.includes('lodging') || cat.includes('resort')
+               || cat.includes('hospitality')) {
       score += 15;
     } else {
       score += 5;

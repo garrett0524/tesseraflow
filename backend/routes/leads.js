@@ -692,9 +692,13 @@ function normalizeCategoryValue(raw) {
   if (['gym', 'gyms', 'fitness center', 'fitness centers'].includes(lower)) return 'Gyms';
   if (['bar', 'bars'].includes(lower)) return 'Bars';
   if (['restaurant', 'restaurants'].includes(lower)) return 'Restaurants';
-  if (['casino', 'casinos'].includes(lower)) return 'Casinos';
-  if (['hotel', 'hotels'].includes(lower)) return 'Hotels';
-  if (lower === 'hospitality') return 'Hospitality';
+  if ([
+    'casino', 'casinos', 'gambling', 'gaming',
+    'gambling & casinos', 'gambling and casinos',
+    'hotel', 'hotels', 'lodging', 'motel', 'motels',
+    'resort', 'resorts', 'hospitality',
+    'event venue', 'event venues',
+  ].includes(lower)) return 'Gambling & Casinos';
   if (lower === 'msp') return 'MSP';
   if (lower === 'isp') return 'ISP';
   if (lower === 'wisp') return 'WISP';
@@ -707,22 +711,23 @@ function normalizeCategoryValue(raw) {
 
 /**
  * Normalize Apollo's free-text "Industry" to one of our canonical categories.
- * Canonical set: Bars, Restaurants, Gyms, Casinos, Hotels, Hospitality,
+ * Canonical set: Bars, Restaurants, Gyms, Gambling & Casinos,
  *                ISP, MSP, IT Services, WISP, Enterprise IT, Other.
  *
- * Order matters: check the more specific MSP/network/casino patterns first
- * so generic terms like "hospitality" don't swallow more specific ones.
+ * Order matters: check the more specific MSP/network patterns first so
+ * generic terms like "telecommunications" don't swallow ISP, etc.
  */
 function mapIndustryToCategory(raw) {
   if (!raw) return null;
   const s = String(raw).toLowerCase();
 
-  // Casinos & gaming (check before "hospitality" since some Apollo records
-  // tag casinos as "hospitality" too).
-  if (s.includes('casino') || s.includes('gambling') || s.includes('gaming')) return 'Casinos';
-
-  // Lodging
-  if (s.includes('hotel') || s.includes('lodging') || s.includes('motel') || s.includes('resort')) return 'Hotels';
+  // Gambling & Casinos absorbs gaming, hospitality, hotels, lodging, resorts,
+  // event venues, catering — anything in the broader hospitality/leisure space.
+  if (s.includes('casino') || s.includes('gambling') || s.includes('gaming')
+      || s.includes('hotel') || s.includes('lodging') || s.includes('motel') || s.includes('resort')
+      || s.includes('hospitality') || s.includes('event') || s.includes('venue') || s.includes('catering')) {
+    return 'Gambling & Casinos';
+  }
 
   // MSP / Network / IT (specific first)
   if (s.includes('managed services') || s.includes('managed it') || s.includes('msp')) return 'MSP';
@@ -742,10 +747,6 @@ function mapIndustryToCategory(raw) {
   if (s.includes('gym') || s.includes('crossfit') || s.includes('fitness') || s.includes('health, wellness') || s.includes('yoga') || s.includes('martial')) {
     return 'Gyms';
   }
-
-  // Generic hospitality (resorts handled above as Hotels; this covers event
-  // venues, catering, hospitality services, etc.)
-  if (s.includes('hospitality') || s.includes('event') || s.includes('venue') || s.includes('catering')) return 'Hospitality';
 
   // Preserve the original value if it doesn't match any known bucket so the
   // user can still filter on it.

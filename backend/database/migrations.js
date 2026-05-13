@@ -143,6 +143,14 @@ async function runMigrations() {
     // them up with the new dropdown values so filtering works.
     { to: 'Bars', match: ['bar', 'bars'] },
     { to: 'Restaurants', match: ['restaurant', 'restaurants'] },
+    // Casinos / Hotels / Hospitality all collapse into a single
+    // "Gambling & Casinos" bucket.
+    { to: 'Gambling & Casinos', match: [
+      'casinos', 'casino', 'gambling & casinos', 'gambling and casinos',
+      'gaming', 'gambling',
+      'hotels', 'hotel', 'lodging', 'motels', 'resorts', 'resort',
+      'hospitality', 'event venues', 'event venue',
+    ]},
   ];
 
   for (const { to, match } of categoryUpdates) {

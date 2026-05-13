@@ -16,7 +16,7 @@ const STAGE_LABELS = {
 };
 
 const KNOWN_CATEGORIES = [
-  'Bars', 'Restaurants', 'Gyms', 'Casinos', 'Hotels', 'Hospitality',
+  'Bars', 'Restaurants', 'Gyms', 'Gambling & Casinos',
   'ISP', 'MSP', 'IT Services', 'WISP', 'Enterprise IT', 'Other',
 ];
 

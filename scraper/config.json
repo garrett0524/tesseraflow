@@ -11,10 +11,7 @@
     "CrossFit",
     "yoga studios",
     "martial arts",
-    "casinos",
-    "hotels",
-    "resorts",
-    "event venues"
+    "casinos"
   ],
   "rate_limit_seconds": 2,
   "max_results_per_query": 100,

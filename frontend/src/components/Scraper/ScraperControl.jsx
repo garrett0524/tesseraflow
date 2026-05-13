@@ -69,9 +69,7 @@ export default function ScraperControl({ onScraperDone }) {
             <option value="restaurants">Restaurants</option>
             <option value="bars">Bars & Pubs</option>
             <option value="gyms">Gyms</option>
-            <option value="casinos">Casinos</option>
-            <option value="hotels">Hotels</option>
-            <option value="hospitality">Hospitality</option>
+            <option value="casinos">Gambling & Casinos</option>
             <option value="all">All Categories</option>
           </select>
         </div>

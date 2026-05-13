@@ -536,9 +536,7 @@ export default function LeadDetailModal({ lead: initialLead, onClose, onSave }) 
                   <option value="Bars" />
                   <option value="Restaurants" />
                   <option value="Gyms" />
-                  <option value="Casinos" />
-                  <option value="Hotels" />
-                  <option value="Hospitality" />
+                  <option value="Gambling & Casinos" />
                   <option value="ISP" />
                   <option value="MSP" />
                   <option value="IT Services" />
