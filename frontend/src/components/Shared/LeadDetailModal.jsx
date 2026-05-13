@@ -26,13 +26,14 @@ const STAGES = [
   { key: 'dead', label: 'Dead' },
 ];
 
-const MSP_CATEGORIES = new Set(['MSP', 'ISP', 'IT Services', 'WISP']);
+const MSP_CATEGORIES = new Set(['MSP', 'ISP', 'IT Services', 'WISP', 'Enterprise IT']);
 function isMspLead(category) {
   if (!category) return false;
   const cat = String(category).toLowerCase();
   if (MSP_CATEGORIES.has(category)) return true;
   return cat.includes('msp') || cat.includes('isp') || cat.includes('wisp')
-    || cat.includes('it service') || cat.includes('managed service') || cat.includes('managed it');
+    || cat.includes('it service') || cat.includes('managed service') || cat.includes('managed it')
+    || cat.includes('enterprise it');
 }
 
 const GEOGRAPHIC_REACH_OPTIONS = ['Local', 'Regional', 'Multi-State', 'National'];
@@ -528,18 +529,22 @@ export default function LeadDetailModal({ lead: initialLead, onClose, onSave }) 
                   type="text"
                   value={category}
                   onChange={e => setCategory(e.target.value)}
-                  placeholder="e.g. Restaurant, MSP, ISP"
+                  placeholder="e.g. Restaurants, MSP, ISP"
                   style={inputStyle}
                 />
                 <datalist id="lead-categories">
-                  <option value="Restaurant" />
-                  <option value="Bar" />
-                  <option value="Gym" />
-                  <option value="Fitness Center" />
-                  <option value="MSP" />
+                  <option value="Bars" />
+                  <option value="Restaurants" />
+                  <option value="Gyms" />
+                  <option value="Casinos" />
+                  <option value="Hotels" />
+                  <option value="Hospitality" />
                   <option value="ISP" />
+                  <option value="MSP" />
                   <option value="IT Services" />
                   <option value="WISP" />
+                  <option value="Enterprise IT" />
+                  <option value="Other" />
                 </datalist>
               </div>
               <div>

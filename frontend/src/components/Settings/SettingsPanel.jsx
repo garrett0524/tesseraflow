@@ -18,7 +18,7 @@ const useIsMobile = () => {
 };
 
 const SCORING_RULES = [
-  { factor: 'Category Match', points: '0-20', logic: 'Bars/Restaurants = 20, Gyms = 20, Other = 10' },
+  { factor: 'Category Match', points: '0-20', logic: 'Bars/Restaurants/Gyms/Casinos/Hotels/Hospitality = 15, MSP/ISP = +10 auto-score bonus, Other = 5' },
   { factor: 'Google Rating', points: '0-15', logic: '4.5+ = 15, 4.0-4.4 = 10, 3.5-3.9 = 5, below = 0' },
   { factor: 'Review Count', points: '0-15', logic: '100+ = 15, 50-99 = 10, 20-49 = 5, below = 0' },
   { factor: 'Has Phone Number', points: '0-10', logic: 'Yes = 10, No = 0' },

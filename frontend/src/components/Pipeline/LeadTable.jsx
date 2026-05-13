@@ -16,8 +16,8 @@ const STAGE_LABELS = {
 };
 
 const KNOWN_CATEGORIES = [
-  'Restaurant', 'Bar', 'Gym', 'Fitness Center',
-  'MSP', 'ISP', 'IT Services', 'WISP',
+  'Bars', 'Restaurants', 'Gyms', 'Casinos', 'Hotels', 'Hospitality',
+  'ISP', 'MSP', 'IT Services', 'WISP', 'Enterprise IT', 'Other',
 ];
 
 const EMAIL_STATUS_DOT = {

@@ -134,6 +134,29 @@ async function runMigrations() {
     console.warn('Pipeline stage constraint migration warning:', e.message);
   }
 
+  // One-off data migration: normalize category names to the canonical
+  // plural set. Idempotent — only matches the old values.
+  const categoryUpdates = [
+    // Spec'd: fitness centers + existing gyms collapse to "Gyms"
+    { to: 'Gyms', match: ['fitness centers', 'fitness center', 'gym', 'gyms'] },
+    // Plural canonicals: pre-existing data used "Bar" / "Restaurant" — line
+    // them up with the new dropdown values so filtering works.
+    { to: 'Bars', match: ['bar', 'bars'] },
+    { to: 'Restaurants', match: ['restaurant', 'restaurants'] },
+  ];
+
+  for (const { to, match } of categoryUpdates) {
+    try {
+      const placeholders = match.map((_, i) => `$${i + 2}`).join(', ');
+      await query(
+        `UPDATE leads SET category = $1 WHERE LOWER(category) IN (${placeholders}) AND category <> $1`,
+        [to, ...match]
+      );
+    } catch (e) {
+      console.warn(`Category normalization to "${to}" warning:`, e.message);
+    }
+  }
+
   console.log('Runtime migrations complete.');
 }
 

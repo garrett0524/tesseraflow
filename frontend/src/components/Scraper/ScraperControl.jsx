@@ -68,7 +68,10 @@ export default function ScraperControl({ onScraperDone }) {
           <select value={category} onChange={e => setCategory(e.target.value)}>
             <option value="restaurants">Restaurants</option>
             <option value="bars">Bars & Pubs</option>
-            <option value="gyms">Gyms & Fitness</option>
+            <option value="gyms">Gyms</option>
+            <option value="casinos">Casinos</option>
+            <option value="hotels">Hotels</option>
+            <option value="hospitality">Hospitality</option>
             <option value="all">All Categories</option>
           </select>
         </div>

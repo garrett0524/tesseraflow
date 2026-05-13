@@ -242,6 +242,8 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'business_name is required' });
     }
 
+    const normalizedCategory = normalizeCategoryValue(category);
+
     const { rows: [newRow] } = await query(
       `INSERT INTO leads (business_name, category, address, city, state, zip,
         phone, website, google_rating, review_count, place_id, owner_name,
@@ -249,7 +251,7 @@ router.post('/', async (req, res) => {
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
        RETURNING id`,
       [
-        business_name, category || null, address || null, city || null,
+        business_name, normalizedCategory, address || null, city || null,
         state || 'NY', zip || null, phone || null, website || null,
         google_rating || null, review_count || 0, place_id || null,
         owner_name || null, pipeline_stage || 'new', lead_score || 0,
@@ -300,7 +302,7 @@ router.put('/:id', async (req, res) => {
     for (const field of fields) {
       if (req.body[field] !== undefined) {
         updates.push(`${field} = $${paramIdx++}`);
-        params.push(req.body[field]);
+        params.push(field === 'category' ? normalizeCategoryValue(req.body[field]) : req.body[field]);
       }
     }
 
@@ -675,27 +677,78 @@ function bucketSize(n) {
 }
 
 /**
- * Normalize Apollo's free-text "Industry" to one of our known categories.
- * Falls back to the original value if nothing matches so the data is still
- * preserved (the user can filter on it from the table).
+ * Collapse old / casing variants of category values to the canonical names
+ * used in the dropdowns. Apollo CSV imports already pass through
+ * mapIndustryToCategory, but this catches direct API writes (manual edits,
+ * scraper, third-party tools) so legacy "Gym" / "Fitness Center" / "Bar"
+ * never resurface.
+ */
+function normalizeCategoryValue(raw) {
+  if (raw === null || raw === undefined) return null;
+  const trimmed = String(raw).trim();
+  if (trimmed === '') return null;
+  const lower = trimmed.toLowerCase();
+
+  if (['gym', 'gyms', 'fitness center', 'fitness centers'].includes(lower)) return 'Gyms';
+  if (['bar', 'bars'].includes(lower)) return 'Bars';
+  if (['restaurant', 'restaurants'].includes(lower)) return 'Restaurants';
+  if (['casino', 'casinos'].includes(lower)) return 'Casinos';
+  if (['hotel', 'hotels'].includes(lower)) return 'Hotels';
+  if (lower === 'hospitality') return 'Hospitality';
+  if (lower === 'msp') return 'MSP';
+  if (lower === 'isp') return 'ISP';
+  if (lower === 'wisp') return 'WISP';
+  if (['it services', 'it service'].includes(lower)) return 'IT Services';
+  if (['enterprise it'].includes(lower)) return 'Enterprise IT';
+  if (lower === 'other') return 'Other';
+
+  return trimmed;
+}
+
+/**
+ * Normalize Apollo's free-text "Industry" to one of our canonical categories.
+ * Canonical set: Bars, Restaurants, Gyms, Casinos, Hotels, Hospitality,
+ *                ISP, MSP, IT Services, WISP, Enterprise IT, Other.
+ *
+ * Order matters: check the more specific MSP/network/casino patterns first
+ * so generic terms like "hospitality" don't swallow more specific ones.
  */
 function mapIndustryToCategory(raw) {
   if (!raw) return null;
   const s = String(raw).toLowerCase();
 
-  // MSP-style buckets — order matters: check the more specific ones first
+  // Casinos & gaming (check before "hospitality" since some Apollo records
+  // tag casinos as "hospitality" too).
+  if (s.includes('casino') || s.includes('gambling') || s.includes('gaming')) return 'Casinos';
+
+  // Lodging
+  if (s.includes('hotel') || s.includes('lodging') || s.includes('motel') || s.includes('resort')) return 'Hotels';
+
+  // MSP / Network / IT (specific first)
   if (s.includes('managed services') || s.includes('managed it') || s.includes('msp')) return 'MSP';
   if (s.includes('wisp') || (s.includes('wireless') && s.includes('isp'))) return 'WISP';
   if (s.includes('internet service') || s.includes('isp') || s.includes('telecom') || s.includes('telecommunication') || s.includes('broadband')) return 'ISP';
-  if (s.includes('information technology') || s.includes('it services') || s.includes('it consulting') || s.includes('computer & network') || s.includes('network security') || s.includes('computer networking')) return 'IT Services';
+  if (s.includes('enterprise it') || s.includes('enterprise software') || s.includes('enterprise technology')) return 'Enterprise IT';
+  if (s.includes('information technology') || s.includes('it services') || s.includes('it consulting')
+      || s.includes('computer & network') || s.includes('network security') || s.includes('computer networking')) {
+    return 'IT Services';
+  }
 
-  // Hospitality / fitness fallbacks for non-MSP leads
-  if (s.includes('restaurant') || s.includes('food & beverage')) return 'Restaurant';
-  if (s.includes('bar') || s.includes('tavern') || s.includes('pub') || s.includes('nightclub')) return 'Bar';
-  if (s.includes('gym') || s.includes('crossfit')) return 'Gym';
-  if (s.includes('fitness') || s.includes('health, wellness') || s.includes('yoga') || s.includes('martial')) return 'Fitness Center';
+  // Food & drink
+  if (s.includes('restaurant') || s.includes('food & beverage') || s.includes('food and beverage') || s.includes('food service')) return 'Restaurants';
+  if (s.includes('bar') || s.includes('tavern') || s.includes('pub') || s.includes('nightclub') || s.includes('brewery')) return 'Bars';
 
-  // Preserve the original value if it doesn't match any known bucket
+  // Fitness collapses into Gyms
+  if (s.includes('gym') || s.includes('crossfit') || s.includes('fitness') || s.includes('health, wellness') || s.includes('yoga') || s.includes('martial')) {
+    return 'Gyms';
+  }
+
+  // Generic hospitality (resorts handled above as Hotels; this covers event
+  // venues, catering, hospitality services, etc.)
+  if (s.includes('hospitality') || s.includes('event') || s.includes('venue') || s.includes('catering')) return 'Hospitality';
+
+  // Preserve the original value if it doesn't match any known bucket so the
+  // user can still filter on it.
   return String(raw).trim();
 }
 

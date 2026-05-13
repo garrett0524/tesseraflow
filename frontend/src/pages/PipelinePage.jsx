@@ -440,17 +440,21 @@ function AddLeadModal({ onClose, onSave }) {
                 >
                   <option value="">Select category...</option>
                   <optgroup label="Hospitality / Fitness">
-                    <option value="Restaurant">Restaurant</option>
-                    <option value="Bar">Bar</option>
-                    <option value="Gym">Gym</option>
-                    <option value="Fitness Center">Fitness Center</option>
+                    <option value="Bars">Bars</option>
+                    <option value="Restaurants">Restaurants</option>
+                    <option value="Gyms">Gyms</option>
+                    <option value="Casinos">Casinos</option>
+                    <option value="Hotels">Hotels</option>
+                    <option value="Hospitality">Hospitality</option>
                   </optgroup>
-                  <optgroup label="MSP / Network">
-                    <option value="MSP">MSP</option>
+                  <optgroup label="MSP / Network / IT">
                     <option value="ISP">ISP</option>
+                    <option value="MSP">MSP</option>
                     <option value="IT Services">IT Services</option>
                     <option value="WISP">WISP</option>
+                    <option value="Enterprise IT">Enterprise IT</option>
                   </optgroup>
+                  <option value="Other">Other</option>
                 </select>
               </div>
               <div>

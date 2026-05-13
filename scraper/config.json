@@ -8,10 +8,13 @@
     "taverns",
     "sports bars",
     "gyms",
-    "fitness centers",
     "CrossFit",
     "yoga studios",
-    "martial arts"
+    "martial arts",
+    "casinos",
+    "hotels",
+    "resorts",
+    "event venues"
   ],
   "rate_limit_seconds": 2,
   "max_results_per_query": 100,
