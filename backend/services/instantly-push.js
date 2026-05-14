@@ -6,6 +6,7 @@
  */
 
 const { query } = require('../database/pg');
+const { buildLeadsWhere, selectAllFiltersToQs } = require('../database/lead-filters');
 
 const INSTANTLY_BASE = 'https://api.instantly.ai/api/v2';
 
@@ -113,7 +114,13 @@ async function pushLeadsToCampaign(leadIds, campaignId) {
 }
 
 /**
- * Push filtered leads to a campaign.
+ * Push filtered leads to a campaign. Accepts either:
+ *   - a named legacy filter string ('has_email_not_sent'), or
+ *   - a lead-table filter object { category?, stage?, priority?, emailStatus?,
+ *       search?, scoreMin?, scoreMax?, attempts? } as sent by the bulk action
+ *     bar's selectAll mode. Leads without an email are skipped downstream by
+ *     pushLeadsToCampaign, but we also pre-filter here to skip them in the
+ *     SELECT so we don't waste cycles re-fetching unsendable rows.
  */
 async function pushFilteredLeads(filter, campaignId) {
   let rows;
@@ -121,6 +128,13 @@ async function pushFilteredLeads(filter, campaignId) {
   if (filter === 'has_email_not_sent') {
     const result = await query(
       "SELECT id FROM leads WHERE email IS NOT NULL AND email != '' AND (email_status = 'none' OR email_status IS NULL)"
+    );
+    rows = result.rows;
+  } else if (filter && typeof filter === 'object') {
+    const where = buildLeadsWhere(selectAllFiltersToQs(filter), 1);
+    const result = await query(
+      `SELECT id FROM leads WHERE email IS NOT NULL AND email <> ''${where.sql}`,
+      where.params
     );
     rows = result.rows;
   } else {

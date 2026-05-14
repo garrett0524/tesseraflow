@@ -39,13 +39,25 @@ router.post('/push', async (req, res) => {
 });
 
 // POST /api/instantly/push-filtered
+// Body shape (one of):
+//   { filter: 'has_email_not_sent', campaignId }     — legacy named filter
+//   { selectAll: true, filters: {...}, campaignId }  — lead-table filter set
+//                                                       from the bulk action bar
 router.post('/push-filtered', async (req, res) => {
   try {
-    const { filter, campaignId } = req.body;
-    if (!filter || !campaignId) {
-      return res.status(400).json({ error: 'filter and campaignId are required' });
+    const { filter, selectAll, filters, campaignId } = req.body;
+    if (!campaignId) {
+      return res.status(400).json({ error: 'campaignId is required' });
     }
-    const result = await pushFilteredLeads(filter, campaignId);
+    let resolvedFilter;
+    if (selectAll === true) {
+      resolvedFilter = filters || {};
+    } else if (filter) {
+      resolvedFilter = filter;
+    } else {
+      return res.status(400).json({ error: 'filter or selectAll is required' });
+    }
+    const result = await pushFilteredLeads(resolvedFilter, campaignId);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });

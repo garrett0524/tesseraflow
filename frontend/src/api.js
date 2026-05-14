@@ -329,10 +329,18 @@ export const pushToInstantly = (leadIds, campaignId) => fetchApi('/instantly/pus
   body: JSON.stringify({ leadIds, campaignId }),
 });
 
-export const pushFilteredToInstantly = (filter, campaignId) => fetchApi('/instantly/push-filtered', {
-  method: 'POST',
-  body: JSON.stringify({ filter, campaignId }),
-});
+// Accepts either a legacy named filter string ('has_email_not_sent') or a
+// selectAll payload object { selectAll: true, filters: {...} } matching the
+// bulk action bar contract.
+export const pushFilteredToInstantly = (filterOrSelection, campaignId) => {
+  const body = (filterOrSelection && typeof filterOrSelection === 'object' && filterOrSelection.selectAll)
+    ? { selectAll: true, filters: filterOrSelection.filters || {}, campaignId }
+    : { filter: filterOrSelection, campaignId };
+  return fetchApi('/instantly/push-filtered', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+};
 
 export const syncInstantlyStatuses = () => fetchApi('/instantly/sync', { method: 'POST' });
 

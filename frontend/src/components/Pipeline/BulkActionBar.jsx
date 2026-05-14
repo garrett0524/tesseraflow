@@ -5,6 +5,7 @@ import {
   enrichLead,
   getInstantlyCampaigns,
   pushToInstantly,
+  pushFilteredToInstantly,
 } from '../../api'
 
 const STAGE_OPTIONS = [
@@ -48,9 +49,12 @@ export default function BulkActionBar({
   const [selectedCampaign, setSelectedCampaign] = useState('');
   const menuRef = useRef(null);
 
-  // Close menus on outside click
+  // Close dropdown menus on outside click. The campaign picker is a full
+  // modal rendered outside menuRef and has its own backdrop click-to-close,
+  // so it must opt out of this handler — otherwise any click on the modal
+  // is treated as "outside" and dismisses it immediately.
   useEffect(() => {
-    if (!openMenu) return;
+    if (!openMenu || openMenu === 'campaign') return;
     const handler = (e) => {
       if (menuRef.current && !menuRef.current.contains(e.target)) setOpenMenu(null);
     };
@@ -136,7 +140,11 @@ export default function BulkActionBar({
     if (!selectedCampaign) return;
     setBusy(true);
     try {
-      const res = await pushToInstantly(selectedIds, selectedCampaign);
+      // selectAll mode never enumerates ids client-side — the server resolves
+      // the lead set from the filter payload and pushes everyone with an email.
+      const res = selectAll
+        ? await pushFilteredToInstantly({ selectAll: true, filters }, selectedCampaign)
+        : await pushToInstantly(selectedIds, selectedCampaign);
       finish(`Pushed ${res.pushed || 0}${res.skipped_no_email ? `, ${res.skipped_no_email} skipped (no email)` : ''}`);
     } catch (err) {
       setBusy(false);
@@ -233,8 +241,7 @@ export default function BulkActionBar({
           <button
             style={buttonStyle}
             onClick={handleOpenCampaignPush}
-            disabled={busy || selectAll}
-            title={selectAll ? 'Disable Select All to push a specific set of leads' : ''}
+            disabled={busy}
           >
             Push to Instantly
           </button>
@@ -297,7 +304,11 @@ export default function BulkActionBar({
             style={{ maxWidth: 420, width: '100%', padding: 'var(--space-2xl)' }}
             onClick={e => e.stopPropagation()}
           >
-            <h3 style={{ marginBottom: 'var(--space-md)' }}>Push {count} leads to Instantly</h3>
+            <h3 style={{ marginBottom: 'var(--space-md)' }}>
+              {selectAll
+                ? `Push up to ${count.toLocaleString()} matching leads to Instantly`
+                : `Push ${count} leads to Instantly`}
+            </h3>
             <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: 'var(--space-lg)' }}>
               Leads without email addresses will be skipped.
             </p>
