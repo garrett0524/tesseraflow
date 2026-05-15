@@ -9,7 +9,7 @@
 
 const express = require('express');
 const { getCampaigns, pushLeadsToCampaign, pushFilteredLeads } = require('../services/instantly-push');
-const { syncEmailStatuses, handleWebhook } = require('../services/instantly-sync');
+const { syncEmailStatuses, syncEmailLog, handleWebhook } = require('../services/instantly-sync');
 
 const router = express.Router();
 
@@ -64,11 +64,17 @@ router.post('/push-filtered', async (req, res) => {
   }
 });
 
-// POST /api/instantly/sync — Manual sync of email statuses
+// POST /api/instantly/sync — Manual sync of email statuses and email log
 router.post('/sync', async (req, res) => {
   try {
-    const result = await syncEmailStatuses();
-    res.json(result);
+    const [statusResult, logResult] = await Promise.allSettled([
+      syncEmailStatuses(),
+      syncEmailLog(),
+    ]);
+    res.json({
+      lead_status: statusResult.status === 'fulfilled' ? statusResult.value : { error: statusResult.reason?.message },
+      email_log: logResult.status === 'fulfilled' ? logResult.value : { error: logResult.reason?.message },
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

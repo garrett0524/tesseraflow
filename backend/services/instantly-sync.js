@@ -17,7 +17,7 @@ async function getApiKey() {
 
 /**
  * Sync email statuses from Instantly for all leads that have been pushed to a campaign.
- * v2: GET /leads?campaign_id=X&email=Y
+ * v2: POST /leads/list with body { campaign_id, search }
  */
 async function syncEmailStatuses() {
   const apiKey = await getApiKey();
@@ -34,13 +34,17 @@ async function syncEmailStatuses() {
 
   for (const lead of leads) {
     try {
-      const url = `${INSTANTLY_BASE}/leads?campaign_id=${encodeURIComponent(lead.instantly_campaign_id)}&email=${encodeURIComponent(lead.email)}`;
-
-      const response = await fetch(url, {
+      const response = await fetch(`${INSTANTLY_BASE}/leads/list`, {
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`,
         },
+        body: JSON.stringify({
+          campaign_id: lead.instantly_campaign_id,
+          search: lead.email,
+          limit: 1,
+        }),
       });
       if (!response.ok) {
         stats.errors++;
@@ -48,8 +52,10 @@ async function syncEmailStatuses() {
       }
 
       const data = await response.json();
-      // v2 may return { items: [...] } or a single lead object
-      const leadData = data.items?.[0] || data;
+      const leadData = data.items?.[0] || data.data?.[0] || (Array.isArray(data) ? data[0] : data);
+      if (!leadData || (Array.isArray(leadData) && leadData.length === 0)) {
+        continue;
+      }
       stats.synced++;
 
       // Determine new status from Instantly data
@@ -139,7 +145,111 @@ async function handleWebhook(payload) {
   return { processed: true, lead_id: lead.id, new_status: newStatus };
 }
 
+/**
+ * Sync sent emails from Instantly's Unibox into the local email_log so the
+ * Email Hub log isn't blank. v2: GET /emails?email_type=sent (paginated).
+ * Matches each email to a lead by recipient address; rows whose recipient
+ * doesn't map to a lead are skipped (counted in no_lead_match).
+ */
+async function syncEmailLog({ maxPages = 20, pageLimit = 100 } = {}) {
+  const apiKey = await getApiKey();
+  if (!apiKey) {
+    throw new Error('Instantly.ai API key not configured.');
+  }
+
+  const stats = { fetched: 0, inserted: 0, updated: 0, no_lead_match: 0, errors: 0 };
+  let startingAfter = null;
+
+  for (let page = 0; page < maxPages; page++) {
+    const params = new URLSearchParams({
+      limit: String(pageLimit),
+      email_type: 'sent',
+    });
+    if (startingAfter) params.set('starting_after', startingAfter);
+
+    const response = await fetch(`${INSTANTLY_BASE}/emails?${params.toString()}`, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+    });
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Instantly emails fetch failed (${response.status}): ${errText}`);
+    }
+
+    const data = await response.json();
+    const items = data.items || data.data || (Array.isArray(data) ? data : []);
+    if (!items.length) break;
+    stats.fetched += items.length;
+
+    for (const email of items) {
+      try {
+        const messageId = email.id;
+        if (!messageId) continue;
+
+        const toRaw = email.to_address_email_list || email.to_address_email
+          || (Array.isArray(email.to) ? email.to[0] : email.to);
+        if (!toRaw) continue;
+
+        // to_address_email_list can be "Name <addr@x>" or comma-separated
+        const firstRecipient = String(toRaw).split(',')[0].trim();
+        const angleMatch = firstRecipient.match(/<([^>]+)>/);
+        const recipient = (angleMatch ? angleMatch[1] : firstRecipient).toLowerCase();
+        if (!recipient) continue;
+
+        const { rows: [lead] } = await query(
+          'SELECT id FROM leads WHERE LOWER(email) = $1 LIMIT 1',
+          [recipient]
+        );
+        if (!lead) {
+          stats.no_lead_match++;
+          continue;
+        }
+
+        const sentAt = email.timestamp_email || email.timestamp_created || new Date().toISOString();
+        let status = 'sent';
+        if (email.replied || email.is_reply) status = 'replied';
+        else if (email.bounced) status = 'bounced';
+        else if (email.opened) status = 'opened';
+
+        const { rows: [existing] } = await query(
+          'SELECT id, status FROM email_log WHERE instantly_message_id = $1',
+          [messageId]
+        );
+
+        if (existing) {
+          if (existing.status !== status) {
+            await query(
+              `UPDATE email_log SET status = $1 WHERE instantly_message_id = $2`,
+              [status, messageId]
+            );
+            stats.updated++;
+          }
+        } else {
+          await query(
+            `INSERT INTO email_log (lead_id, instantly_message_id, status, sent_at, sequence_name, step_number)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [lead.id, messageId, status, sentAt, email.subject || null, email.step || null]
+          );
+          stats.inserted++;
+        }
+      } catch (err) {
+        console.error('Instantly email log sync row error:', err.message);
+        stats.errors++;
+      }
+    }
+
+    const nextCursor = data.next_starting_after || data.starting_after;
+    if (!nextCursor || items.length < pageLimit) break;
+    startingAfter = nextCursor;
+  }
+
+  return stats;
+}
+
 module.exports = {
   syncEmailStatuses,
+  syncEmailLog,
   handleWebhook,
 };

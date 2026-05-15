@@ -97,12 +97,15 @@ async function getSequenceStatus() {
 
     let analyticsMap = {};
     try {
-      const analytics = await instantlyFetch('/api/v2/campaigns/analytics');
-      const analyticsList = Array.isArray(analytics) ? analytics : (analytics.data || []);
+      const ids = campaignList.map(c => c.id).filter(Boolean).join(',');
+      const path = ids
+        ? `/api/v2/campaigns/analytics?ids=${encodeURIComponent(ids)}`
+        : '/api/v2/campaigns/analytics';
+      const analytics = await instantlyFetch(path);
+      const analyticsList = Array.isArray(analytics) ? analytics : (analytics.items || analytics.data || []);
       for (const a of analyticsList) {
-        if (a.campaign_id || a.id) {
-          analyticsMap[a.campaign_id || a.id] = a;
-        }
+        const key = a.campaign_id || a.id;
+        if (key) analyticsMap[key] = a;
       }
     } catch (analyticsErr) {
       console.warn('Failed to fetch campaign analytics:', analyticsErr.message);
@@ -117,12 +120,12 @@ async function getSequenceStatus() {
         id: campaign.id,
         name: campaign.name,
         status: statusLabel,
-        total_leads: a.total_leads || a.leads_count || 0,
+        total_leads: a.leads_count ?? a.total_leads ?? 0,
         steps: stepCount,
-        emails_sent: a.emails_sent || a.sent || 0,
-        emails_opened: a.emails_opened || a.opened || 0,
-        emails_replied: a.emails_replied || a.replied || 0,
-        emails_bounced: a.emails_bounced || a.bounced || 0,
+        emails_sent: a.contacted_count ?? a.emails_sent_count ?? a.emails_sent ?? 0,
+        emails_opened: a.open_count ?? a.emails_opened ?? 0,
+        emails_replied: a.reply_count ?? a.emails_replied ?? 0,
+        emails_bounced: a.bounced_count ?? a.emails_bounced ?? 0,
       };
     });
 
@@ -140,8 +143,19 @@ async function getDomainHealth() {
   }
 
   try {
-    const accounts = await instantlyFetch('/api/v2/accounts');
-    const accountList = Array.isArray(accounts) ? accounts : (accounts.data || accounts.items || []);
+    const accountList = [];
+    let startingAfter = null;
+    for (let page = 0; page < 10; page++) {
+      const qs = new URLSearchParams({ limit: '100' });
+      if (startingAfter) qs.set('starting_after', startingAfter);
+      const accounts = await instantlyFetch(`/api/v2/accounts?${qs.toString()}`);
+      const items = Array.isArray(accounts) ? accounts : (accounts.items || accounts.data || []);
+      if (!items.length) break;
+      accountList.push(...items);
+      const next = accounts.next_starting_after || accounts.starting_after;
+      if (!next || items.length < 100) break;
+      startingAfter = next;
+    }
 
     if (accountList.length === 0) {
       return { domains: [] };
