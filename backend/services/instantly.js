@@ -6,7 +6,7 @@
 
 const { query } = require('../database/pg');
 
-const INSTANTLY_BASE = 'https://api.instantly.ai';
+const INSTANTLY_BASE = 'https://api.instantly.ai/api/v2';
 
 async function getApiKey() {
   const { rows: [setting] } = await query("SELECT value FROM settings WHERE key = 'instantly_api_key'");
@@ -68,7 +68,7 @@ async function sendEmail({ to, subject, body, account_id }) {
     };
   }
 
-  const result = await instantlyFetch('/api/v2/emails/test', {
+  const result = await instantlyFetch('/emails/test', {
     method: 'POST',
     body: JSON.stringify({ account_id, to, subject, body }),
   });
@@ -88,50 +88,47 @@ async function getSequenceStatus() {
   }
 
   try {
-    const campaigns = await instantlyFetch('/api/v2/campaigns');
-    const campaignList = Array.isArray(campaigns) ? campaigns : (campaigns.data || campaigns.items || []);
+    const analytics = await instantlyFetch('/campaigns/analytics');
+    const analyticsList = Array.isArray(analytics) ? analytics : (analytics.items || analytics.data || []);
 
-    if (campaignList.length === 0) {
-      return { sequences: [] };
-    }
+    const sequences = analyticsList.map(a => ({
+      id: a.campaign_id,
+      name: a.campaign_name,
+      status: CAMPAIGN_STATUS_MAP[a.campaign_status] || 'unknown',
+      total_leads: a.leads_count ?? 0,
+      steps: 0,
+      emails_sent: a.emails_sent_count ?? 0,
+      emails_opened: a.open_count ?? 0,
+      emails_replied: a.reply_count ?? 0,
+      emails_bounced: a.bounced_count ?? 0,
+    }));
 
-    let analyticsMap = {};
+    // Backfill drafts (campaigns with no activity won't appear in analytics).
+    const known = new Set(sequences.map(s => s.id));
     try {
-      const ids = campaignList.map(c => c.id).filter(Boolean).join(',');
-      const path = ids
-        ? `/api/v2/campaigns/analytics?ids=${encodeURIComponent(ids)}`
-        : '/api/v2/campaigns/analytics';
-      const analytics = await instantlyFetch(path);
-      const analyticsList = Array.isArray(analytics) ? analytics : (analytics.items || analytics.data || []);
-      for (const a of analyticsList) {
-        const key = a.campaign_id || a.id;
-        if (key) analyticsMap[key] = a;
+      const campaigns = await instantlyFetch('/campaigns');
+      const campaignList = Array.isArray(campaigns) ? campaigns : (campaigns.items || campaigns.data || []);
+      for (const c of campaignList) {
+        if (!c.id || known.has(c.id)) continue;
+        sequences.push({
+          id: c.id,
+          name: c.name,
+          status: CAMPAIGN_STATUS_MAP[c.status] || 'unknown',
+          total_leads: 0,
+          steps: c.sequences?.[0]?.steps?.length || 0,
+          emails_sent: 0,
+          emails_opened: 0,
+          emails_replied: 0,
+          emails_bounced: 0,
+        });
       }
-    } catch (analyticsErr) {
-      console.warn('Failed to fetch campaign analytics:', analyticsErr.message);
+    } catch (campErr) {
+      console.warn('Failed to backfill draft campaigns:', campErr.message);
     }
-
-    const sequences = campaignList.map(campaign => {
-      const a = analyticsMap[campaign.id] || {};
-      const stepCount = campaign.sequences?.[0]?.steps?.length || 0;
-      const statusLabel = CAMPAIGN_STATUS_MAP[campaign.status] || 'unknown';
-
-      return {
-        id: campaign.id,
-        name: campaign.name,
-        status: statusLabel,
-        total_leads: a.leads_count ?? a.total_leads ?? 0,
-        steps: stepCount,
-        emails_sent: a.contacted_count ?? a.emails_sent_count ?? a.emails_sent ?? 0,
-        emails_opened: a.open_count ?? a.emails_opened ?? 0,
-        emails_replied: a.reply_count ?? a.emails_replied ?? 0,
-        emails_bounced: a.bounced_count ?? a.emails_bounced ?? 0,
-      };
-    });
 
     return { sequences };
   } catch (err) {
-    console.error('Failed to fetch Instantly campaigns:', err.message);
+    console.error('Failed to fetch Instantly campaign analytics:', err.message);
     return { sequences: [], error: err.message };
   }
 }
@@ -148,7 +145,7 @@ async function getDomainHealth() {
     for (let page = 0; page < 10; page++) {
       const qs = new URLSearchParams({ limit: '100' });
       if (startingAfter) qs.set('starting_after', startingAfter);
-      const accounts = await instantlyFetch(`/api/v2/accounts?${qs.toString()}`);
+      const accounts = await instantlyFetch(`/accounts?${qs.toString()}`);
       const items = Array.isArray(accounts) ? accounts : (accounts.items || accounts.data || []);
       if (!items.length) break;
       accountList.push(...items);
@@ -205,7 +202,7 @@ async function getAnalyticsOverview() {
   if (!apiKey) return null;
 
   try {
-    const data = await instantlyFetch('/api/v2/campaigns/analytics/overview');
+    const data = await instantlyFetch('/campaigns/analytics/overview');
     return data;
   } catch (err) {
     console.error('Failed to fetch Instantly analytics overview:', err.message);
